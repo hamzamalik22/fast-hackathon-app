@@ -65,7 +65,7 @@ CREATE TABLE IF NOT EXISTS roster_audit (
 CREATE INDEX IF NOT EXISTS roster_audit_player_idx ON roster_audit (player_id);
 
 CREATE TABLE IF NOT EXISTS roster_requests (
-  request_id TEXT PRIMARY KEY, request_canonical TEXT NOT NULL, response TEXT NOT NULL);
+  request_id TEXT PRIMARY KEY, league_id TEXT NOT NULL, request_canonical TEXT NOT NULL, response TEXT NOT NULL);
 
 CREATE TABLE IF NOT EXISTS products (
   product_id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, club_id TEXT, name TEXT NOT NULL,

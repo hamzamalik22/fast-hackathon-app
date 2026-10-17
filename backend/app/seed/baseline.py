@@ -7,6 +7,7 @@ import bcrypt
 from .. import config, db
 from ..domain import rbac
 from ..domain.sports import validate_sport
+from . import demo
 
 TABLES = [
     "meta", "counters", "tenants", "users", "rbac_policies", "sports", "leagues", "matches", "match_events",
@@ -102,11 +103,7 @@ async def reset(conn, seed: int = 42, stock: dict | None = None) -> dict:
                            "VALUES (%s,'prod-jersey-001',%s,'blue',450000,%s,0)", (vid, size, stock_levels[vid]))
     await conn.execute("INSERT INTO discount_codes(code, percent) VALUES ('WELCOME10', 10)")
 
-    try:
-        from . import demo  # extra demo data for the mobile app (namespaced ids)
-        await demo.seed(conn)
-    except ImportError:
-        pass
+    await demo.seed(conn)  # extra demo data for the mobile app (namespaced ids)
 
     await conn.execute("INSERT INTO meta(key, value) VALUES ('seeded', '1')")
     return {

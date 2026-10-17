@@ -9,9 +9,10 @@ from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from . import db
-from .api import audit
+from .api import audit, mobile, ws
 from .errors import ApiError
 from .http import BodyLimitMiddleware
+from .security import RateLimitMiddleware
 from .seed import baseline
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -29,7 +30,18 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="NaSCon League & Club Operations Platform", version="1.0.0", lifespan=lifespan)
-app.add_middleware(BodyLimitMiddleware)
+app.add_middleware(RateLimitMiddleware)  # inner: /api/v1/* only
+app.add_middleware(BodyLimitMiddleware)  # outermost: 413 before anything else
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 def _err(status: int, code: str, message: str, details: dict | None = None, headers=None) -> JSONResponse:
@@ -77,6 +89,8 @@ async def health():
 
 
 app.include_router(audit.router)
+app.include_router(mobile.router)
+app.include_router(ws.router)
 
 _static = Path(__file__).parent / "static"
 _static.mkdir(exist_ok=True)

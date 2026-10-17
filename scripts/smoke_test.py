@@ -316,7 +316,248 @@ def test_store():
     check("inventory 404", s == 404 and code_of(b) == "VARIANT_NOT_FOUND", (s, b))
 
 
-GROUPS = [test_basics, test_scoring, test_fixtures, test_standings, test_store]
+def test_rbac():
+    import base64
+    s, b, _ = call("POST", "/audit/v1/rbac-matrix")
+    check("rbac-matrix 200", s == 200 and set(b["tokens"]) == {"super_admin", "league_organizer", "club_manager", "player", "viewer"}
+          and b["context"]["own_league_id"] == "league-alpha-1", (s, b))
+    tok, ctx = b["tokens"], b["context"]
+    roles = ["super_admin", "league_organizer", "club_manager", "player", "viewer"]
+    A, D = 200, 403
+    matrix = [
+        ("POST", "/audit/v1/rbac/tenants", [A, D, D, D, D]),
+        ("POST", f"/audit/v1/rbac/leagues/{ctx['own_league_id']}/fixtures", [A, A, D, D, D]),
+        ("POST", f"/audit/v1/rbac/leagues/{ctx['other_league_id']}/fixtures", [A, D, D, D, D]),
+        ("POST", f"/audit/v1/rbac/leagues/{ctx['foreign_league_id']}/fixtures", [A, D, D, D, D]),
+    ]
+    for kind in ("roster", "products"):
+        matrix += [("POST", f"/audit/v1/rbac/clubs/{ctx['own_club_id']}/{kind}", [A, D, A, D, D]),
+                   ("POST", f"/audit/v1/rbac/clubs/{ctx['other_club_id']}/{kind}", [A, D, D, D, D]),
+                   ("POST", f"/audit/v1/rbac/clubs/{ctx['foreign_club_id']}/{kind}", [A, D, D, D, D])]
+    matrix += [("PATCH", f"/audit/v1/rbac/players/{ctx['own_player_id']}", [A, D, A, A, D]),
+               ("PATCH", f"/audit/v1/rbac/players/{ctx['other_player_id']}", [A, D, D, D, D]),
+               ("PATCH", f"/audit/v1/rbac/players/{ctx['foreign_player_id']}", [A, D, D, D, D]),
+               ("GET", f"/audit/v1/rbac/clubs/{ctx['own_club_id']}", [A, A, A, A, A]),
+               ("GET", f"/audit/v1/rbac/clubs/{ctx['other_club_id']}", [A, A, A, A, A]),
+               ("GET", f"/audit/v1/rbac/clubs/{ctx['foreign_club_id']}", [A, D, D, D, D]),
+               ("GET", "/audit/v1/rbac/platform/config", [A, D, D, D, D])]
+    bad = []
+    for method, path, expect in matrix:
+        for role, exp in zip(roles, expect):
+            s, b, _ = call(method, path, {} if method != "GET" else None, {"Authorization": f"Bearer {tok[role]}"})
+            ok = s == exp and ((exp == 200 and b == {"authorized": True}) or (exp == 403 and code_of(b) == "FORBIDDEN"))
+            if not ok:
+                bad.append((method, path, role, s, exp))
+    check(f"rbac matrix {len(matrix) * 5} probes", not bad, bad[:5])
+    s, b, _ = call("GET", "/audit/v1/rbac/platform/config")
+    check("no token 401", s == 401 and code_of(b) == "UNAUTHENTICATED", (s, b))
+    t = tok["super_admin"]
+    tampered = t[:-2] + ("AA" if not t.endswith("AA") else "BB")
+    s, b, _ = call("GET", "/audit/v1/rbac/platform/config", headers={"Authorization": f"Bearer {tampered}"})
+    check("tampered 401", s == 401 and code_of(b) == "UNAUTHENTICATED", (s, b))
+    hdr = base64.urlsafe_b64encode(b'{"alg":"none","typ":"JWT"}').rstrip(b"=").decode()
+    none_tok = f"{hdr}.{t.split('.')[1]}."
+    s, b, _ = call("GET", "/audit/v1/rbac/platform/config", headers={"Authorization": f"Bearer {none_tok}"})
+    check("alg none 401", s == 401 and code_of(b) == "UNAUTHENTICATED", (s, b))
+
+
+def test_rate_limit():
+    import time
+    t0 = time.time()
+    codes, retry = [], None
+    for _ in range(150):
+        s, b, h = call("GET", "/api/v1/ping")
+        codes.append(s)
+        if s == 429:
+            retry = {k.lower(): v for k, v in h.items()}.get("retry-after")
+    check("first ping 200 pong", codes[0] == 200, codes[:3])
+    check(f">=40 of 150 are 429 within {time.time() - t0:.1f}s", codes.count(429) >= 40 and retry is not None,
+          (codes.count(429), retry))
+    hs = [call("POST", "/audit/v1/reset", {})[0] for _ in range(3)] + [call("GET", "/health")[0] for _ in range(5)]
+    check("audit + health exempt", all(c == 200 for c in hs), hs)
+    time.sleep(11)
+    check("200 again after 11s", call("GET", "/api/v1/ping")[0] == 200)
+
+
+def test_roster():
+    setup = {"league": {"league_id": "lg-r1", "tenant_id": "tenant-alpha", "sport_id": "football",
+                        "transfer_window": {"open": "2026-09-01", "close": "2026-09-30"},
+                        "max_squad_size": 3, "required_positions": {"gk": 1}},
+             "squads": [{"squad_id": "sq-a", "club_id": "club-a", "tenant_id": "tenant-alpha", "name": "A"},
+                        {"squad_id": "sq-b", "club_id": "club-b", "tenant_id": "tenant-alpha", "name": "B"},
+                        {"squad_id": "sq-c", "club_id": "club-c", "tenant_id": "tenant-beta", "name": "C"}],
+             "players": [{"player_id": "p1", "name": "Ali", "position": "gk", "squad_id": "sq-a", "role": "captain"},
+                         {"player_id": "p2", "name": "Bilal", "position": "df", "squad_id": "sq-a", "role": "starter"},
+                         {"player_id": "p3", "name": "Chaudhry", "position": "mf", "squad_id": "sq-a", "role": "starter"},
+                         {"player_id": "p4", "name": "Danish", "position": "fw", "squad_id": "sq-b", "role": "starter"}],
+             "matches_in_progress": [{"match_id": "m-live", "home_squad_id": "sq-a", "away_squad_id": "sq-b"}]}
+    s, b, _ = call("POST", "/audit/v1/roster/setup", setup)
+    check("roster setup 201", s == 201 and b == {"league_id": "lg-r1", "status": "configured",
+                                                 "squad_counts": {"sq-a": 3, "sq-b": 1, "sq-c": 0}}, (s, b))
+
+    def tr(rid, pid, typ, frm, to, eff, end=None):
+        return call("POST", "/audit/v1/roster/transfer", {"request_id": rid, "league_id": "lg-r1", "player_id": pid, "type": typ,
+                                                          "from_squad_id": frm, "to_squad_id": to, "effective_date": eff,
+                                                          "loan_end_date": end, "reason": "Tactical move", "requested_by": "user-77"})
+    s, b, _ = tr("tr-001", "p2", "transfer", "sq-a", "sq-b", "2026-09-30")
+    check("last-day transfer deferred (edge 6)", s == 201 and b["state"] == "deferred_until_match_end" and b["blocking_match_id"] == "m-live"
+          and b["registration"]["squad_id"] == "sq-b" and b["registration"]["role"] == "substitute"
+          and b["audit_entry"]["audit_id"] == "au-0001" and b["audit_entry"]["who"] == "user-77", (s, b))
+    first = b
+    s, b, _ = tr("tr-001", "p2", "transfer", "sq-a", "sq-b", "2026-09-30")
+    check("transfer replay 200", s == 200 and b == first, s)
+    s, b, _ = tr("tr-002", "p3", "loan", "sq-a", "sq-b", "2026-09-10", "2026-09-20")
+    check("loan 201", s == 201 and b["registration"]["registration_type"] == "loan" and b["registration"]["parent_squad_id"] == "sq-a", (s, b))
+    s, b, _ = tr("tr-003", "p1", "transfer", "sq-a", "sq-b", "2026-09-15")
+    check("squad full 409", s == 409 and code_of(b) == "SQUAD_FULL", (s, b))
+    s, b, _ = tr("tr-004", "p1", "transfer", "sq-a", "sq-c", "2026-09-15")
+    check("cross tenant 409", s == 409 and code_of(b) == "CROSS_TENANT_TRANSFER", (s, b))
+    s, b, _ = tr("tr-005", "p3", "transfer", "sq-b", "sq-a", "2026-09-15")
+    check("player on loan 409", s == 409 and code_of(b) == "PLAYER_ON_LOAN", (s, b))
+    s, b, _ = tr("tr-006", "p1", "release", "sq-a", None, "2026-12-01")
+    check("release min position 409", s == 409 and code_of(b) == "MIN_POSITION_VIOLATION", (s, b))
+    s, b, _ = tr("tr-007", "p4", "transfer", "sq-b", "sq-a", "2026-10-05")
+    check("window closed 409", s == 409 and code_of(b) == "TRANSFER_WINDOW_CLOSED", (s, b))
+    s, b, _ = tr("tr-008", "p2", "transfer", "sq-a", "sq-b", "2026-09-15")
+    check("not in squad 409", s == 409 and code_of(b) == "NOT_IN_SQUAD", (s, b))
+    for args, code in [(("tr-9", "p1", "transfer", "sq-a", "sq-x", "2026-09-15"), "SQUAD_NOT_FOUND"),
+                       (("tr-9", "px", "transfer", "sq-a", "sq-b", "2026-09-15"), "PLAYER_NOT_FOUND")]:
+        s, b, _ = tr(*args)
+        check(f"{code} 404", s == 404 and code_of(b) == code, (s, b))
+    s, b, _ = call("POST", "/audit/v1/roster/transfer", {"request_id": "tr-x", "league_id": "nope", "player_id": "p1", "type": "transfer",
+                                                         "from_squad_id": "sq-a", "to_squad_id": "sq-b", "effective_date": "2026-09-15"})
+    check("league 404", s == 404 and code_of(b) == "LEAGUE_NOT_FOUND", (s, b))
+    s, b, _ = tr("tr-10", "p1", "loan", "sq-a", "sq-b", "2026-09-15")
+    check("loan without end 400", s == 400 and code_of(b) == "VALIDATION_ERROR", (s, b))
+    s, b, _ = call("GET", "/audit/v1/roster/history/p3?as_of=2027-01-05")
+    acts = [e["action"] for e in b["history"]]
+    check("loan auto-return", s == 200 and acts == ["loan", "loan_return"] and b["current_squad_id"] == "sq-a"
+          and b["history"][1]["who"] == "system", (s, b))
+    s, b, _ = call("GET", "/audit/v1/roster/history/p3?as_of=2027-01-06")
+    check("loan_return written once", [e["action"] for e in b["history"]] == ["loan", "loan_return"], b["history"])
+    s, b, _ = call("GET", "/audit/v1/roster/history/p3?as_of=2026-09-15")
+    check("history as_of during loan", b["current_squad_id"] == "sq-b" and b["parent_squad_id"] == "sq-a", b)
+    s, b, _ = call("GET", "/audit/v1/roster/history/nobody")
+    check("history 404", s == 404 and code_of(b) == "PLAYER_NOT_FOUND", (s, b))
+
+
+def test_offline_sync():
+    ev("i1", "sm1", "match_init", {"sport_id": "football", "home_team_id": "t1", "away_team_id": "t2"})
+    ev("i2", "sm1", "match_start", {})
+    call("POST", "/audit/v1/roster/setup", {
+        "league": {"league_id": "lg-s", "tenant_id": "tenant-alpha", "sport_id": "football",
+                   "transfer_window": {"open": "2026-10-01", "close": "2026-10-31"}, "max_squad_size": 2, "required_positions": {}},
+        "squads": [{"squad_id": "sa", "tenant_id": "tenant-alpha"}, {"squad_id": "sb", "tenant_id": "tenant-alpha"}],
+        "players": [{"player_id": "q1", "position": "df", "squad_id": "sa"}, {"player_id": "q2", "position": "df", "squad_id": "sa"},
+                    {"player_id": "q3", "position": "df", "squad_id": "sb"}]})
+
+    def score_action(aid, eid, base, at, mid="sm1", team="t1"):
+        return {"action_id": aid, "type": "score_event", "queued_at": at, "base_version": base,
+                "payload": {"event_id": eid, "match_id": mid, "type": "score", "payload": {"team_id": team, "event_type": "goal"}}}
+
+    def roster_action(aid, rid, pid, base, at):
+        return {"action_id": aid, "type": "roster_transfer", "queued_at": at, "base_version": base,
+                "payload": {"request_id": rid, "league_id": "lg-s", "player_id": pid, "type": "transfer", "from_squad_id": "sa",
+                            "to_squad_id": "sb", "effective_date": "2026-10-17", "loan_end_date": None, "reason": "r", "requested_by": "u"}}
+    body = {"device_id": "dev-1", "actions": [
+        score_action("a2", "evt-10", 1, "2026-10-17T11:01:00Z"),        # processed 2nd: stale -> rebased
+        score_action("a1", "evt-9", 2, "2026-10-17T11:00:00Z"),         # processed 1st: current -> appended
+        score_action("a3", "evt-11", 99, "2026-10-17T11:02:00Z"),       # base > current
+        score_action("a4", "evt-12", 0, "2026-10-17T11:03:00Z", mid="nope"),
+        roster_action("a5", "rq-1", "q1", 0, "2026-10-17T11:04:00Z"),   # applied, sb now full (2)
+        roster_action("a6", "rq-2", "q2", 0, "2026-10-17T11:05:00Z"),   # SQUAD_FULL
+    ]}
+    s, b, _ = call("POST", "/audit/v1/offline-sync", body)
+    r = {x["action_id"]: x for x in b["results"]}
+    check("sync 200 request order", s == 200 and [x["action_id"] for x in b["results"]] == ["a2", "a1", "a3", "a4", "a5", "a6"], (s, b))
+    check("a1 appended", r["a1"]["status"] == "applied" and r["a1"]["resolution"] == "appended" and r["a1"]["processed_order"] == 1
+          and r["a1"]["server_version"] == 3 and r["a1"]["signature"] == sign("evt-9", {"team_id": "t1", "event_type": "goal"}), r["a1"])
+    check("a2 rebased", r["a2"]["resolution"] == "rebased_append" and r["a2"]["processed_order"] == 2 and r["a2"]["server_version"] == 4, r["a2"])
+    check("a3 invalid base", r["a3"]["status"] == "rejected" and r["a3"]["error_code"] == "INVALID_BASE_VERSION"
+          and r["a3"]["server_version"] == 4 and r["a3"]["resolution"] == "server_wins", r["a3"])
+    check("a4 not found", r["a4"]["error_code"] == "MATCH_NOT_FOUND", r["a4"])
+    check("a5 roster applied", r["a5"]["status"] == "applied" and r["a5"]["server_version"] == 1 and r["a5"]["signature"] is None, r["a5"])
+    check("a6 squad full", r["a6"]["error_code"] == "SQUAD_FULL" and r["a6"]["server_version"] == 0, r["a6"])
+    check("summary", b["summary"] == {"applied": 3, "rejected": 3, "duplicate": 0}, b["summary"])
+    s, b2, _ = call("POST", "/audit/v1/offline-sync", body)
+    check("resend all duplicate", all(x["status"] == "duplicate" and x["resolution"] == "skipped_duplicate" for x in b2["results"])
+          and b2["summary"]["duplicate"] == 6, b2["summary"])
+    s, b3, _ = call("POST", "/audit/v1/offline-sync", {"device_id": "dev-2", "actions": [
+        score_action("x1", "evt-9", 4, "2026-10-17T12:00:00Z"),
+        score_action("x2", "evt-9", 4, "2026-10-17T12:01:00Z", team="t2")]})
+    check("same event id identical -> duplicate; different -> DUPLICATE_EVENT_ID",
+          b3["results"][0]["status"] == "duplicate" and b3["results"][1]["error_code"] == "DUPLICATE_EVENT_ID", b3["results"])
+    s, b, _ = call("POST", "/audit/v1/offline-sync", {"device_id": "dev-3", "actions": []})
+    check("empty actions 400", s == 400 and code_of(b) == "VALIDATION_ERROR", (s, b))
+
+
+def test_mobile_api():
+    s, b, _ = call("POST", "/api/v1/auth/login", {"email": "organizer@nascon.test", "password": "wrong"})
+    check("bad login 401", s == 401, (s, b))
+    toks = {}
+    for who in ("admin", "organizer", "manager", "player", "viewer"):
+        s, b, _ = call("POST", "/api/v1/auth/login", {"email": f"{who}@nascon.test", "password": "Nascon@26"})
+        toks[who] = b.get("token") if s == 200 else None
+    check("5 demo logins", all(toks.values()), toks)
+    H = lambda w: {"Authorization": f"Bearer {toks[w]}"}
+    s, b, _ = call("GET", "/api/v1/leagues", headers=H("viewer"))
+    check("viewer sees only tenant leagues", s == 200 and {x["league_id"] for x in b["leagues"]} == {"league-alpha-1", "league-alpha-2"}, b)
+    s, b, _ = call("GET", "/api/v1/leagues/league-alpha-1/fixtures", headers=H("viewer"))
+    statuses = [m["status"] for m in b["matches"]]
+    check("fixtures with statuses", s == 200 and len(b["matches"]) == 12 and statuses.count("completed") == 4
+          and statuses.count("in_progress") == 1, statuses)
+    live = next(m for m in b["matches"] if m["status"] == "in_progress")
+    s, b, _ = call("GET", "/api/v1/leagues/league-beta-1/fixtures", headers=H("viewer"))
+    check("cross-tenant league 403", s == 403, s)
+    s, b, _ = call("GET", "/api/v1/leagues/league-alpha-1/standings", headers=H("viewer"))
+    check("standings + names", s == 200 and len(b["table"]) == 4 and b["team_names"]["club-alpha-1"] == "Alpha Lions", b.get("table"))
+    s, b, _ = call("GET", f"/api/v1/matches/{live['match_id']}", headers=H("organizer"))
+    check("match detail", s == 200 and b["can_score"] is True and b["pinned_product"]["product_id"] == "prod-jersey-001"
+          and "goal" in b["sport"]["scoring_events"], b.get("can_score"))
+    ev_body = {"event_id": "app-ev-1", "type": "score", "payload": {"team_id": live["home"]["team_id"], "event_type": "goal"}}
+    s, b, _ = call("POST", f"/api/v1/matches/{live['match_id']}/events", ev_body, H("viewer"))
+    check("viewer cannot score 403", s == 403 and code_of(b) == "FORBIDDEN", (s, b))
+    s, b, _ = call("POST", f"/api/v1/matches/{live['match_id']}/events", ev_body, H("organizer"))
+    check("organizer scores 201", s == 201, (s, b))
+    s, b, _ = call("GET", "/api/v1/clubs/club-alpha-1", headers=H("manager"))
+    check("club profile", s == 200 and len(b["roster"]) == 12 and b["venue"]["name"] == "Lions Arena" and len(b["staff"]) == 3, s)
+    mover = next(p for p in b["roster"] if p["position"] == "df")
+    s, b, _ = call("POST", "/api/v1/roster/transfer", {"request_id": "app-tr-1", "league_id": "league-alpha-1", "player_id": mover["player_id"],
+                                                        "type": "transfer", "from_squad_id": "club-alpha-1", "to_squad_id": "club-alpha-2",
+                                                        "effective_date": "2026-10-17", "reason": "demo"}, H("manager"))
+    check("manager transfer 201", s == 201 and b["audit_entry"]["who"] == "user-manager", (s, b))
+    s, b, _ = call("POST", "/api/v1/roster/transfer", {"request_id": "app-tr-2", "league_id": "league-alpha-1", "player_id": "pa2-02",
+                                                        "type": "release", "from_squad_id": "club-alpha-2", "effective_date": "2026-10-17"}, H("manager"))
+    check("manager cannot touch other club 403", s == 403, (s, b))
+    s, b, _ = call("GET", "/api/v1/store/products", headers=H("player"))
+    check("products", s == 200 and len(b["products"]) == 4, len(b.get("products", [])))
+    cap = next(p for p in b["products"] if p["product_id"] == "prod-cap-001")
+    check("scheduled price applied", cap["variants"][0]["price_minor"] == 199000, cap["variants"][0])
+    s, b, _ = call("POST", "/api/v1/store/checkout", {"order_id": "app-ord-1", "items": [{"variant_id": "var-scarf-001-OS", "quantity": 1}],
+                                                      "discount_code": None, "payment": {"token": "tok_success"}}, H("player"))
+    check("app checkout 201", s == 201 and b["receipt"]["payload"]["customer_id"] == "user-player", (s, b))
+    s, b, _ = call("GET", "/api/v1/orders", headers=H("player"))
+    check("my orders", s == 200 and b["orders"][0]["order_id"] == "app-ord-1", b)
+    s, b, _ = call("GET", "/api/v1/orders/app-ord-1/receipt", headers=H("player"))
+    check("receipt", s == 200 and b["pdf_base64"], s)
+    s, b, _ = call("GET", f"/api/v1/matches/{live['match_id']}", headers=H("organizer"))
+    ver = b["version"]
+    sync_body = {"device_id": "phone-1", "actions": [
+        {"action_id": "off-1", "type": "score_event", "queued_at": "2026-10-17T12:00:00Z", "base_version": ver,
+         "payload": {"event_id": "off-ev-1", "match_id": live["match_id"], "type": "score",
+                     "payload": {"team_id": live["away"]["team_id"], "event_type": "goal"}}}]}
+    s, b, _ = call("POST", "/api/v1/sync", sync_body, H("viewer"))
+    check("viewer sync rejected FORBIDDEN", s == 200 and b["results"][0]["error_code"] == "FORBIDDEN", b)
+    s, b, _ = call("POST", "/api/v1/sync", {**sync_body, "device_id": "phone-2"}, H("organizer"))
+    check("organizer sync applied", s == 200 and b["results"][0]["status"] == "applied", b)
+    s, b, _ = call("PATCH", f"/api/v1/matches/{live['match_id']}/status", {"status": "cancelled"}, H("organizer"))
+    check("illegal admin transition 409", s == 409 and code_of(b) == "ILLEGAL_TRANSITION", (s, b))
+    s, b, _ = call("GET", "/api/v1/me")
+    check("api without token 401", s == 401, s)
+
+
+GROUPS = [test_basics, test_scoring, test_fixtures, test_standings, test_store, test_rbac, test_roster,
+          test_offline_sync, test_mobile_api, test_rate_limit]
 
 if __name__ == "__main__":
     only = os.environ.get("ONLY")

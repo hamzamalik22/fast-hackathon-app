@@ -40,16 +40,21 @@ async def append_event(body: dict, conn=None) -> tuple[int, dict]:
     req = scoring.validate_event_request(body)
     if conn is None:
         async with db.tx() as c:
-            status, resp = await _append(c, req)
+            status, resp, live = await _append(c, req)
     else:
-        status, resp = await _append(conn, req)
+        status, resp, live = await _append(conn, req)
     if status == 201:
-        await realtime.publish(f"match:{req['match_id']}", {"type": "match_event", "match_id": req["match_id"],
-                                                             "event": {k: resp[k] for k in ("event_id", "type", "sequence")}})
+        await realtime.publish(f"match:{req['match_id']}", {
+            "type": "match_event", "match_id": req["match_id"], "score": live,
+            "event": {"event_id": resp["event_id"], "type": resp["type"], "sequence": resp["sequence"],
+                      "payload": req["payload"]}})
+        if live and live.get("league_id") and req["type"] in ("match_end", "compensation"):
+            await realtime.publish(f"league:{live['league_id']}", {"type": "standings_changed",
+                                                                   "league_id": live["league_id"]})
     return status, resp
 
 
-async def _append(conn, req: dict) -> tuple[int, dict]:
+async def _append(conn, req: dict) -> tuple[int, dict, dict | None]:
     canon = canonical(req)
     await db.lock(conn, "match:" + req["match_id"])
     await db.lock(conn, "event:" + req["event_id"])
@@ -57,7 +62,7 @@ async def _append(conn, req: dict) -> tuple[int, dict]:
                               (req["event_id"],))
     if prior is not None:
         if prior["request_canonical"] == canon:
-            return 200, db.lj(prior["response"])
+            return 200, db.lj(prior["response"]), None
         raise conflict("DUPLICATE_EVENT_ID", f"Event id {req['event_id']} was already used with a different body.",
                        event_id=req["event_id"])
 
@@ -72,6 +77,7 @@ async def _append(conn, req: dict) -> tuple[int, dict]:
                            "created_by_init) VALUES (%s,%s,%s,%s,%s,TRUE)",
                            (req["match_id"], p.get("league_id"), p["sport_id"], p["home_team_id"], p["away_team_id"]))
         events = []
+        sport, match = None, None
     else:
         if match is None:
             raise not_found("MATCH_NOT_FOUND", f"Match {req['match_id']} does not exist.", match_id=req["match_id"])
@@ -92,7 +98,13 @@ async def _append(conn, req: dict) -> tuple[int, dict]:
         "request_canonical, response) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
         (req["event_id"], req["match_id"], sequence, req["type"], db.dj(p), signature,
          p.get("compensates") if req["type"] == "compensation" else None, canon, db.dj(resp)))
-    return 201, resp
+    live = None
+    if match is not None:
+        st = scoring.fold(sport, match, events + [{"event_id": req["event_id"], "type": req["type"], "payload": p}])
+        live = {"status": st.status, "outcome": st.outcome, "version": sequence, "league_id": match["league_id"],
+                "home": {"team_id": st.home.team_id, "score": st.home.score, "wickets": st.home.wickets},
+                "away": {"team_id": st.away.team_id, "score": st.away.score, "wickets": st.away.wickets}}
+    return 201, resp, live
 
 
 async def match_version(conn, match_id: str) -> int:
