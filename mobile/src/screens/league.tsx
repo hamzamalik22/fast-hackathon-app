@@ -102,9 +102,10 @@ export function HomeScreen({ navigation }: any) {
   const [leagueId] = useSelectedLeague(leagues.data);
   const league = leagues.data?.find((l) => l.league_id === leagueId);
   const fixtures = useFixtures(leagueId);
-  const standings = useStandings(leagueId);
-  const products = useProducts();
   const club = useClub(user?.club_id ?? null);
+  // Managers and players follow their own club's league; others follow the selected league.
+  const standings = useStandings(role === 'club_manager' || role === 'player' ? club.data?.roster_league_id ?? leagueId : leagueId);
+  const products = useProducts();
   const log = useSyncLog();
   const [addSport, setAddSport] = useState(false);
   const all = fixtures.data ?? [];
@@ -156,7 +157,7 @@ export function HomeScreen({ navigation }: any) {
             <Row style={{ marginTop: 14 }}>
               <View style={{ flex: 1 }}><Score>{myRow ? `${myRow.rank}${['th', 'st', 'nd', 'rd'][myRow.rank] ?? 'th'}` : '—'}</Score><Muted style={{ fontSize: 12 }}>{myRow ? `${myRow.points} pts` : 'No table yet'}</Muted></View>
               <View style={{ flex: 1 }}><Score>{club.data.roster.length}<Text style={[st.scoreSmall, { color: C.dim }]}>/25</Text></Score><Muted style={{ fontSize: 12 }}>Squad size</Muted></View>
-              <View style={{ flex: 1 }}><Score style={{ color: C.lime }}>Open</Score><Muted style={{ fontSize: 12 }}>Window · to 31 Oct</Muted></View>
+              <View style={{ flex: 1 }}><Score style={{ color: C.lime }}>Open</Score><Muted style={{ fontSize: 12 }} numberOfLines={1}>Window · 31 Oct</Muted></View>
             </Row>
           </Card>
           <Section title="Roster actions" />
@@ -244,7 +245,7 @@ export function HomeScreen({ navigation }: any) {
 
       {role !== 'club_manager' ? (
         <>
-          <Section title={role === 'viewer' || role === 'player' ? 'Later today' : live.length ? 'Live now' : 'Coming up'} action="Fixtures" onAction={() => navigation.navigate('Fixtures')} />
+          <Section title={role === 'viewer' || role === 'player' ? (later.length ? 'Later today' : 'Coming up') : live.length ? 'Live now' : 'Coming up'} action="Fixtures" onAction={() => navigation.navigate('Fixtures')} />
           {(role === 'viewer' || role === 'player') ? (
             <Card style={{ padding: 0 }}>
               {(later.length ? later : next).map((m) => (
@@ -293,7 +294,10 @@ export function HomeScreen({ navigation }: any) {
   );
 }
 
-function dayKey(d: Date) { return d.toISOString().slice(0, 10); }
+/** Local calendar day (not UTC): PKT is UTC+5, so UTC dates would shift late-night matches to the wrong day. */
+export function dayKey(d: Date) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
 
 export function FixturesScreen({ navigation }: any) {
   const leagues = useLeagues();
@@ -583,9 +587,9 @@ const st = StyleSheet.create({
   liveDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: C.live },
   action: { flex: 1, backgroundColor: C.card, borderWidth: 1, borderColor: C.border, borderRadius: 16, alignItems: 'center', paddingVertical: 12, gap: 8, minHeight: 84 },
   actionIcon: { width: 40, height: 40, borderRadius: 12, backgroundColor: C.card3, alignItems: 'center', justifyContent: 'center' },
-  laterRow: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 12, borderTopWidth: 1, borderTopColor: C.divider, minHeight: 60 },
+  laterRow: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 12, borderTopWidth: 1, borderTopColor: C.divider, marginTop: -1, minHeight: 60 },
   thumb: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center', borderRadius: 10, overflow: 'hidden', backgroundColor: C.card3 },
-  snapRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 14, minHeight: 48, borderTopWidth: 1, borderTopColor: C.divider },
+  snapRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 14, minHeight: 48, borderTopWidth: 1, borderTopColor: C.divider, marginTop: -1 },
   promo: { marginTop: 20, flexDirection: 'row', alignItems: 'center', backgroundColor: '#2F8F62', borderRadius: 20, overflow: 'hidden' },
   promoImg: { width: 120, height: 120 },
   json: { backgroundColor: C.bg, color: C.text, fontFamily: F.mono, fontSize: 12, borderRadius: 12, borderWidth: 1, borderColor: C.border2, padding: 12, minHeight: 200, maxHeight: 280, textAlignVertical: 'top' },
@@ -595,11 +599,11 @@ const st = StyleSheet.create({
   dayNum: { fontFamily: F.display, fontSize: 22, color: C.text },
   pinImg: { width: 64, height: 64, borderRadius: 12 },
   buy: { backgroundColor: C.lime, borderRadius: 12, paddingHorizontal: 18, minHeight: 44, justifyContent: 'center' },
-  tl: { paddingHorizontal: 14, paddingVertical: 12, borderTopWidth: 1, borderTopColor: C.divider },
+  tl: { paddingHorizontal: 14, paddingVertical: 12, borderTopWidth: 1, borderTopColor: C.divider, marginTop: -1 },
   tlIcon: { width: 32, height: 32, borderRadius: 16, backgroundColor: C.card3, alignItems: 'center', justifyContent: 'center' },
   seg: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 52, borderRadius: 14, borderWidth: 1, borderColor: C.border2, backgroundColor: C.card, paddingHorizontal: 12 },
   tile: { width: '31.5%', height: 84, borderRadius: 14, borderWidth: 1, borderColor: C.border2, backgroundColor: C.card, alignItems: 'center', justifyContent: 'center', gap: 4, padding: 6 },
-  tr: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 10, borderTopWidth: 1, borderTopColor: C.divider },
+  tr: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 10, borderTopWidth: 1, borderTopColor: C.divider, marginTop: -1 },
   th: { color: C.faint, fontSize: 11, fontWeight: '600', letterSpacing: 0.6 },
   num: { width: 28, textAlign: 'center' },
   bar: { width: 4, height: 18, borderRadius: 2, marginRight: 8, marginLeft: 6 },

@@ -1,6 +1,6 @@
 // Global chrome from the handoff: top app bar + sync badge, offline banner, toasts, status chips, sync results sheet.
 import { useNavigation } from '@react-navigation/native';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Image, Pressable, RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { create } from 'zustand';
@@ -141,11 +141,15 @@ export function Stale({ error, onRetry }: { updatedAt?: string | null; error: an
 }
 
 export function LeaguePicker({ leagues, value, onChange }: { leagues: League[] | null; value: string | null; onChange: (id: string) => void }) {
+  const ref = useRef<ScrollView>(null);
   if (!leagues?.length) return <Empty title="No leagues yet" message="Leagues you can follow will appear here." icon="trophy-outline" />;
   return (
-    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 14, flexGrow: 0 }}>
+    <ScrollView ref={ref} horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 14, flexGrow: 0 }}>
       {leagues.map((l) => (
-        <Chip key={l.league_id} label={l.name} selected={l.league_id === value} onPress={() => onChange(l.league_id)} icon={sportIcon(l.scoring_model, l.sport_id)} />
+        // Keep the selected league visible (it may be off-screen after returning to the screen).
+        <View key={l.league_id} onLayout={(e) => { if (l.league_id === value) ref.current?.scrollTo({ x: Math.max(0, e.nativeEvent.layout.x - 16), animated: false }); }}>
+          <Chip label={l.name} selected={l.league_id === value} onPress={() => onChange(l.league_id)} icon={sportIcon(l.scoring_model, l.sport_id)} />
+        </View>
       ))}
     </ScrollView>
   );

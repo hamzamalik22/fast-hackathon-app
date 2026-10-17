@@ -68,7 +68,9 @@ export function ProductScreen({ route, navigation }: any) {
   const add = useCart((s) => s.add);
   const { width } = useWindowDimensions();
   if (!p) return <Screen><Empty title="This item isn’t available" message="Go back to the store and pull to refresh." icon="shopping-outline" /></Screen>;
-  const v = p.variants.find((x) => x.variant_id === variantId) ?? p.variants.find((x) => x.stock > 0) ?? p.variants[0];
+  const ORDER = ['XS', 'S', 'M', 'L', 'XL', 'XXL'];
+  const variants = [...p.variants].sort((a, b) => (ORDER.indexOf(a.size) + 1 || 99) - (ORDER.indexOf(b.size) + 1 || 99));
+  const v = variants.find((x) => x.variant_id === variantId) ?? variants.find((x) => x.stock > 0) ?? variants[0];
   const max = Math.max(1, Math.min(10, v.stock));
   return (
     <Screen>
@@ -79,7 +81,7 @@ export function ProductScreen({ route, navigation }: any) {
       <Muted style={{ marginTop: 6 }}>{p.description}</Muted>
       <Section title="Size" />
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', rowGap: 10 }}>
-        {p.variants.map((x) => (
+        {variants.map((x) => (
           <Chip key={x.variant_id} label={x.size} selected={x.variant_id === v.variant_id} disabled={x.stock <= 0} strike={x.stock <= 0}
             onPress={() => { setVariantId(x.variant_id); setQty(1); }} />
         ))}
@@ -185,6 +187,7 @@ export function CheckoutScreen({ route, navigation }: any) {
   const [overlay, setOverlay] = useState(false);
   const [steps, setSteps] = useState<Step[]>(['idle', 'idle', 'idle', 'idle']);
   const [failure, setFailure] = useState<string | null>(null);
+  const [paying, setPaying] = useState(0);
   const subtotal = lines.reduce((s, l) => s + l.variant.price_minor * l.quantity, 0);
   const discount = code ? Math.floor((subtotal * (VALID_CODES[code] ?? 0)) / 100) : 0;
   const total = subtotal - discount;
@@ -192,6 +195,7 @@ export function CheckoutScreen({ route, navigation }: any) {
 
   const pay = async () => {
     setFailure(null);
+    setPaying(total);
     setOverlay(true);
     const mark = (i: number, s: Step) => setSteps((prev) => prev.map((x, j) => (j === i ? s : x)));
     setSteps(['running', 'idle', 'idle', 'idle']);
@@ -204,7 +208,9 @@ export function CheckoutScreen({ route, navigation }: any) {
       await wait(350); mark(3, 'done');
       await wait(300);
       setOverlay(false);
-      navigation.replace('Receipt', { orderId: r.order_id });
+      // Store → Receipt: Back from the receipt returns to the store, not to an empty cart.
+      navigation.popToTop();
+      navigation.navigate('Receipt', { orderId: r.order_id });
     } catch (e) {
       const err = e as ApiError;
       if (err.code === 'PAYMENT_CAPTURE_FAILED') {
@@ -257,7 +263,7 @@ export function CheckoutScreen({ route, navigation }: any) {
       <Modal visible={overlay} animationType="fade" onRequestClose={() => failure && setOverlay(false)} statusBarTranslucent>
         <View style={[st.overlay, { paddingTop: insets.top + 40, paddingBottom: insets.bottom + 24 }]}>
           <Text style={{ fontSize: 20, fontWeight: '700' }}>{failure ? 'Payment didn’t go through' : 'Processing your payment'}</Text>
-          <Muted style={{ marginTop: 6, marginBottom: 24 }}>{failure ? 'Nothing was charged.' : `Paying ${money(total)}. Please keep the app open.`}</Muted>
+          <Muted style={{ marginTop: 6, marginBottom: 24 }}>{failure ? 'Nothing was charged.' : `Paying ${money(paying)}. Please keep the app open.`}</Muted>
           {STEPS.map((label, i) => (
             <Row key={label} style={st.step} gap={14}>
               <View style={[st.stepIcon, steps[i] === 'done' && { backgroundColor: C.lime }, steps[i] === 'fail' && { backgroundColor: C.live }]}>
@@ -275,7 +281,7 @@ export function CheckoutScreen({ route, navigation }: any) {
               <View style={{ flex: 1 }} />
               <Row gap={10}>
                 <Btn kind="outline" label="Back to cart" onPress={() => { setOverlay(false); navigation.goBack(); }} style={{ flex: 1 }} />
-                <Btn label="Try another card" onPress={() => setOverlay(false)} style={{ flex: 1 }} />
+                <Btn label="Try again" onPress={() => setOverlay(false)} style={{ flex: 1 }} />
               </Row>
             </>
           ) : null}
@@ -290,7 +296,15 @@ export function ReceiptScreen({ route, navigation }: any) {
   const r = useCached<Receipt>(`receipt:${orderId}`, () => api.receipt(orderId));
   const order = cacheGet<CheckoutResult>(`order:${orderId}`)?.data;
   const [paper, setPaper] = useState(false);
+  const products = useProducts();
   const rec = r.data ?? cacheGet<Receipt>(`receipt:${orderId}`)?.data;
+  const itemName = (vid: string) => {
+    for (const pr of products.data ?? []) {
+      const va = pr.variants.find((x) => x.variant_id === vid);
+      if (va) return `${pr.name} · ${va.size}`;
+    }
+    return vid;
+  };
   if (!rec) return <Screen><Stale error={r.error} onRetry={r.refresh} /></Screen>;
   const p = rec.payload;
   return (
@@ -303,7 +317,7 @@ export function ReceiptScreen({ route, navigation }: any) {
       </View>
       <Card>
         {p.items.map((i) => (
-          <Row key={i.variant_id} style={st.sum}><Text style={{ flex: 1 }} numberOfLines={1}>{i.variant_id} × {i.quantity}</Text><Text>{money(i.unit_price_minor * i.quantity)}</Text></Row>
+          <Row key={i.variant_id} style={st.sum}><Text style={{ flex: 1 }} numberOfLines={2}>{itemName(i.variant_id)} × {i.quantity}</Text><Text>{money(i.unit_price_minor * i.quantity)}</Text></Row>
         ))}
         <View style={{ height: 1, backgroundColor: C.divider, marginVertical: 8 }} />
         <Row style={st.sum}><Muted>Subtotal</Muted><Text>{money(p.subtotal_minor)}</Text></Row>
@@ -327,7 +341,7 @@ export function ReceiptScreen({ route, navigation }: any) {
           <View style={{ height: 1, backgroundColor: C.rule, marginVertical: 10 }} />
           {p.items.map((i) => (
             <Row key={i.variant_id} style={{ justifyContent: 'space-between', marginBottom: 4 }}>
-              <Text style={{ color: C.ink, fontSize: 13, flex: 1 }} numberOfLines={1}>{i.variant_id} × {i.quantity}</Text>
+              <Text style={{ color: C.ink, fontSize: 13, flex: 1 }} numberOfLines={2}>{itemName(i.variant_id)} × {i.quantity}</Text>
               <Text style={{ color: C.ink, fontFamily: F.mono, fontSize: 12 }}>{money(i.unit_price_minor * i.quantity)}</Text>
             </Row>
           ))}
@@ -371,7 +385,7 @@ const st = StyleSheet.create({
   input: { backgroundColor: C.card, color: C.text, borderRadius: 12, borderWidth: 1, borderColor: C.border2, paddingHorizontal: 16, minHeight: 52, fontSize: 15, fontFamily: F.regular },
   applied: { backgroundColor: C.okBg, borderRadius: 12, paddingHorizontal: 14, minHeight: 52 },
   sum: { justifyContent: 'space-between', paddingVertical: 4 },
-  meta: { justifyContent: 'space-between', paddingHorizontal: 16, minHeight: 44, borderTopWidth: 1, borderTopColor: C.divider },
+  meta: { justifyContent: 'space-between', paddingHorizontal: 16, minHeight: 44, borderTopWidth: 1, borderTopColor: C.divider, marginTop: -1 },
   offline: { backgroundColor: C.offSurface, borderWidth: 1, borderColor: C.offBorder, borderRadius: 12, padding: 12, marginTop: 14 },
   overlay: { flex: 1, backgroundColor: C.bg, paddingHorizontal: 24 },
   step: { minHeight: 56 },

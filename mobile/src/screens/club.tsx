@@ -218,7 +218,10 @@ function AddPlayerSheet({ visible, clubId, onDone }: { visible: boolean; clubId:
   );
 }
 
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => {
+  const d = new Date(); // local date: the transfer window is judged on the club's calendar day
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 export function PlayerActionScreen({ route, navigation }: any) {
@@ -354,7 +357,7 @@ export function AuditScreen({ route }: any) {
 }
 
 const st = StyleSheet.create({
-  clubRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14, minHeight: 56, paddingVertical: 8, borderTopWidth: 1, borderTopColor: C.divider },
+  clubRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14, minHeight: 56, paddingVertical: 8, borderTopWidth: 1, borderTopColor: C.divider, marginTop: -1 },
   hero: { borderRadius: 22, padding: 18 },
   heroBadge: { padding: 3, borderRadius: 36, backgroundColor: 'rgba(255,255,255,0.18)' },
   tabs: { backgroundColor: C.card, borderRadius: 14, padding: 4, marginTop: 16, marginBottom: 14, borderWidth: 1, borderColor: C.border },

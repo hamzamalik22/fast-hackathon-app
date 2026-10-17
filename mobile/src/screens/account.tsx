@@ -70,7 +70,7 @@ export function SyncScreen() {
       <Section title={`Waiting to sync · ${pending.length}`} />
       <Card style={{ padding: 0 }}>
         {pending.map((p) => (
-          <Row key={p.action_id} style={{ paddingHorizontal: 14, paddingVertical: 12, borderTopWidth: 1, borderTopColor: C.divider }} gap={12}>
+          <Row key={p.action_id} style={{ paddingHorizontal: 14, paddingVertical: 12, borderTopWidth: 1, borderTopColor: C.divider, marginTop: -1 }} gap={12}>
             <View style={{ width: 36, height: 36, borderRadius: 10, borderWidth: 1.5, borderStyle: 'dashed', borderColor: C.warn, alignItems: 'center', justifyContent: 'center' }}>
               <Icon name="timer-sand" size={18} color={C.warnText} />
             </View>
@@ -87,7 +87,7 @@ export function SyncScreen() {
       <Section title="Last sync results" action={results.length ? 'Clear' : undefined} onAction={() => { syncLogClear(); useNet.setState({ lastResults: [] }); setCleared(cleared + 1); }} />
       <Card style={{ padding: 0 }}>
         {results.map((r) => (
-          <Row key={r.action_id} style={{ paddingHorizontal: 14, paddingVertical: 12, borderTopWidth: 1, borderTopColor: C.divider, alignItems: 'flex-start' }} gap={12}>
+          <Row key={r.action_id} style={{ paddingHorizontal: 14, paddingVertical: 12, borderTopWidth: 1, borderTopColor: C.divider, marginTop: -1, alignItems: 'flex-start' }} gap={12}>
             <Icon name={r.status === 'rejected' ? 'close-circle' : 'check-circle'} size={22} color={r.status === 'rejected' ? C.err : C.okText} />
             <View style={{ flex: 1 }}>
               <Text style={{ fontWeight: '500' }}>{r.label}</Text>

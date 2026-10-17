@@ -26,12 +26,12 @@ TENANTS = [
 ]
 USERS = [
     # user_id, email, role, tenant_id, name, league_ids, club_id, player_id
-    ("user-admin", "admin@nascon.test", "super_admin", None, "Platform Admin", [], None, None),
-    ("user-organizer", "organizer@nascon.test", "league_organizer", "tenant-alpha", "League Organizer",
+    ("user-admin", "admin@nascon.test", "super_admin", None, "Ayesha Khan", [], None, None),
+    ("user-organizer", "organizer@nascon.test", "league_organizer", "tenant-alpha", "Bilal Hussain",
      ["league-alpha-1", "league-alpha-t20", "league-alpha-esports"], None, None),
-    ("user-manager", "manager@nascon.test", "club_manager", "tenant-alpha", "Club Manager", [], "club-alpha-1", None),
-    ("user-player", "player@nascon.test", "player", "tenant-alpha", "Ali Raza", [], "club-alpha-1", "player-alpha-1"),
-    ("user-viewer", "viewer@nascon.test", "viewer", "tenant-alpha", "General Viewer", [], None, None),
+    ("user-manager", "manager@nascon.test", "club_manager", "tenant-alpha", "Mariam Iqbal", [], "club-alpha-1", None),
+    ("user-player", "player@nascon.test", "player", "tenant-alpha", "Hamza Siddiqui", [], "club-alpha-1", "player-alpha-1"),
+    ("user-viewer", "viewer@nascon.test", "viewer", "tenant-alpha", "Sara Ahmed", [], None, None),
 ]
 LEAGUES = [
     ("league-alpha-1", "tenant-alpha", "football", "Alpha Premier League"),
@@ -44,7 +44,7 @@ CLUBS = [
     ("club-beta-1", "tenant-beta", "Beta Rangers", "Rangers Park", 24.8607, 67.0011),
 ]
 PLAYERS = [
-    ("player-alpha-1", "league-alpha-1", "Ali Raza", "fw", "club-alpha-1", "captain"),
+    ("player-alpha-1", "league-alpha-1", "Hamza Siddiqui", "fw", "club-alpha-1", "captain"),
     ("player-alpha-2", "league-alpha-1", "Bilal Khan", "mf", "club-alpha-2", "starter"),
     ("player-beta-1", "league-beta-1", "Daniyal Shah", "df", "club-beta-1", "starter"),
 ]
@@ -100,7 +100,7 @@ async def reset(conn, seed: int = 42, stock: dict | None = None) -> dict:
                        "'Alpha Lions Home Jersey 2026','apparel','Official home jersey.','/static/prod-jersey-001.png')")
     for vid, size in (("var-jersey-001-M", "M"), ("var-jersey-001-L", "L")):
         await conn.execute("INSERT INTO variants(variant_id,product_id,size,color,price_minor,stock,reserved) "
-                           "VALUES (%s,'prod-jersey-001',%s,'blue',450000,%s,0)", (vid, size, stock_levels[vid]))
+                           "VALUES (%s,'prod-jersey-001',%s,'green',450000,%s,0)", (vid, size, stock_levels[vid]))
     await conn.execute("INSERT INTO discount_codes(code, percent) VALUES ('WELCOME10', 10)")
 
     await demo.seed(conn)  # extra demo data for the mobile app (namespaced ids)

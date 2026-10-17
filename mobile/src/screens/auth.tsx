@@ -189,5 +189,5 @@ const st = StyleSheet.create({
   inputWrap: { flexDirection: 'row', alignItems: 'center', backgroundColor: C.card, borderColor: C.border2, borderWidth: 1, borderRadius: 12, paddingHorizontal: 16, minHeight: 52 },
   input: { flex: 1, color: C.text, fontSize: 15, paddingVertical: 12, fontFamily: F.regular },
   errorBox: { backgroundColor: C.errSurface, borderWidth: 1, borderColor: C.errBorder, padding: 12, borderRadius: 12, marginBottom: 14 },
-  about: { justifyContent: 'space-between', paddingHorizontal: 16, minHeight: 48, borderTopWidth: 1, borderTopColor: C.divider },
+  about: { justifyContent: 'space-between', paddingHorizontal: 16, minHeight: 48, borderTopWidth: 1, borderTopColor: C.divider, marginTop: -1 },
 });

@@ -175,8 +175,18 @@ export function ListRow({ icon, title, subtitle, right, onPress, danger, badge }
 }
 
 const BADGE_COLORS = ['#2F8F62', '#3A63DB', '#CF4436', '#7B5CF0', '#C9821E', '#00897B', '#B8860B', '#455A64'];
+// Fixed club colours (like the handoff's seed data); any other club falls back to a stable hash colour.
+const CLUB_COLORS: Record<string, string> = {
+  'Alpha Lions': '#2F8F62', 'Alpha Falcons': '#3A63DB', 'Alpha Tigers': '#CF4436', 'Alpha Wolves': '#7B5CF0',
+  'Beta Rangers': '#C9821E', 'Beta Strikers': '#00897B',
+};
+
 export function clubColor(name: string): string {
-  return BADGE_COLORS[Math.abs([...name].reduce((h, ch) => h * 31 + ch.charCodeAt(0), 7)) % BADGE_COLORS.length];
+  if (CLUB_COLORS[name]) return CLUB_COLORS[name];
+  // 32-bit FNV-1a: a plain h*31 overflows float precision and maps different names to the same colour.
+  let h = 0x811c9dc5;
+  for (let i = 0; i < name.length; i++) h = Math.imul(h ^ name.charCodeAt(i), 0x01000193);
+  return BADGE_COLORS[(h >>> 0) % BADGE_COLORS.length];
 }
 export function initials(name: string, n = 3) {
   return name.split(/\s+/).filter(Boolean).map((w) => w[0]).join('').slice(0, n).toUpperCase();
@@ -230,11 +240,12 @@ export const s = StyleSheet.create({
   muted: { color: C.muted, fontSize: 13, lineHeight: 19 },
   caps: { color: C.faint, fontSize: 12, fontWeight: '600', letterSpacing: 1.2, textTransform: 'uppercase' },
   score: { color: C.text, fontFamily: F.display, fontSize: 28, lineHeight: 30 },
-  card: { backgroundColor: C.card, borderColor: C.border, borderWidth: 1, borderRadius: R.card, padding: 16 },
+  card: { backgroundColor: C.card, borderColor: C.border, borderWidth: 1, borderRadius: R.card, padding: 16, overflow: 'hidden' },
   pill: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, height: 26, borderRadius: R.pill, alignSelf: 'flex-start' },
   chip: { flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: 40, paddingHorizontal: 14, borderRadius: R.pill, borderWidth: 1, borderColor: C.border2, marginRight: 8 },
   btn: { minHeight: 54, borderRadius: R.btn, borderWidth: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 16 },
-  listRow: { flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: 56, paddingVertical: 10, paddingHorizontal: 14, borderTopWidth: 1, borderTopColor: C.divider },
+  // marginTop -1 tucks the first row's divider under the card border, so only separators between rows show
+  listRow: { flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: 56, paddingVertical: 10, paddingHorizontal: 14, borderTopWidth: 1, borderTopColor: C.divider, marginTop: -1 },
   iconTile: { width: 36, height: 36, borderRadius: 10, backgroundColor: C.card3, alignItems: 'center', justifyContent: 'center' },
   badge: { minWidth: 22, height: 22, borderRadius: 11, backgroundColor: C.lime, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 6 },
   sheet: { backgroundColor: C.card, borderTopLeftRadius: R.sheet, borderTopRightRadius: R.sheet, padding: 20, paddingTop: 10, borderWidth: 1, borderColor: C.border },

@@ -37,8 +37,9 @@ curl http://localhost:8080/health        # {"status":"ok"} once the DB is reacha
 | Player | player@nascon.test | Nascon@26 | `player-alpha-1` |
 | General Viewer | viewer@nascon.test | Nascon@26 | Read-only inside `tenant-alpha` |
 
-Demo data for the app: `league-alpha-1` (football, 4 clubs, double round robin with 4 completed matches, 1 live match with a
-pinned jersey, the rest upcoming), club rosters (12 players each), staff, venues, and store items (jersey, scarf, cap with a
+Demo data for the app: every seeded sport has a league with results, a live match and a table: `league-alpha-1` (football,
+double round robin, live match with a pinned jersey), `league-alpha-2` (basketball), `league-alpha-t20` (cricket, live chase
+168/7 vs 142/4 built ball by ball) and `league-alpha-esports` (best of 3, live at 1–1), club rosters (12 players each), staff, venues, and store items (jersey, scarf, cap with a
 scheduled price change, digital wallpaper). The jersey size M starts with stock 1 (graded scenario), so buy size L or the scarf in demos.
 
 ## Mobile app (Android)
