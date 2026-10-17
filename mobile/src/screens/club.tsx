@@ -1,153 +1,368 @@
 import React, { useState } from 'react';
-import { Linking, View } from 'react-native';
-import { Button, Card, Dialog, HelperText, List, Portal, SegmentedButtons, Text, TextInput } from 'react-native-paper';
+import { Image, Linking, Pressable, StyleSheet, TextInput, View } from 'react-native';
 
 import * as actions from '../lib/actions';
-import { ApiError } from '../lib/api';
+import { ApiError, Club, RosterPlayer } from '../lib/api';
 import { can, useClub, useClubs, usePending, usePlayerHistory } from '../lib/data';
 import { humanize } from '../lib/hooks';
-import { useSession } from '../lib/state';
-import { Empty, Screen, Stale, styles } from './common';
+import { useNet, useSession } from '../lib/state';
+import { sendNow } from '../lib/sync';
+import { clubBadge, staffPhoto } from '../ui/images';
+import { Btn, C, Caps, Card, Chip, clubColor, Display, EmptyState, F, Icon, initials, ListRow, Mono, Muted, Pill, Row, Score, Section, Sheet, TeamBadge, Text } from '../ui/kit';
+import { Empty, Screen, Stale, toast } from './common';
+
+const POS: Record<string, string> = { gk: 'Goalkeepers', df: 'Defenders', mf: 'Midfielders', fw: 'Forwards' };
+const ROLE_ORDER = ['captain', 'vice_captain', 'starter', 'substitute'];
 
 export function ClubsScreen({ navigation }: any) {
   const clubs = useClubs();
   return (
     <Screen onRefresh={clubs.refresh} refreshing={clubs.loading}>
-      {clubs.data?.map((c) => <List.Item key={c.club_id} title={c.name} onPress={() => navigation.navigate('Club', { clubId: c.club_id })} />)}
-      {!clubs.data?.length && <Empty title="No clubs yet" />}
+      <Card style={{ padding: 0 }}>
+        {clubs.data?.map((c) => (
+          <Pressable key={c.club_id} style={st.clubRow} onPress={() => navigation.navigate('Club', { clubId: c.club_id })} accessibilityRole="button">
+            <TeamBadge name={c.name} source={clubBadge(c.club_id)} size={36} />
+            <Text style={{ flex: 1, fontWeight: '600' }}>{c.name}</Text><Icon name="chevron-right" color={C.dim} />
+          </Pressable>
+        ))}
+      </Card>
+      {!clubs.data?.length ? <Empty title="No clubs yet" icon="shield-outline" /> : null}
     </Screen>
   );
+}
+
+function Avatar({ p, size = 36 }: { p: RosterPlayer; size?: number }) {
+  return (
+    <View style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: C.card3, alignItems: 'center', justifyContent: 'center' }}>
+      <Text style={{ fontFamily: F.display, fontSize: size * 0.42, color: C.text2 }}>{initials(p.name, 2)}</Text>
+    </View>
+  );
+}
+
+function grouped(roster: RosterPlayer[]) {
+  const g: Record<string, RosterPlayer[]> = {};
+  roster.forEach((p) => { (g[p.position] = g[p.position] || []).push(p); });
+  Object.values(g).forEach((list) => list.sort((a, b) => ROLE_ORDER.indexOf(a.role ?? 'substitute') - ROLE_ORDER.indexOf(b.role ?? 'substitute')));
+  return Object.entries(g).sort(([a], [b]) => Object.keys(POS).indexOf(a) - Object.keys(POS).indexOf(b));
 }
 
 export function ClubScreen({ route, navigation }: any) {
   const { clubId } = route.params;
   const club = useClub(clubId);
   const user = useSession((s) => s.user);
-  const pending = usePending();
-  const [adding, setAdding] = useState(false);
+  const [tab, setTab] = useState<'overview' | 'squad' | 'staff' | 'history'>('overview');
   const c = club.data;
-  if (!c) return <Screen><Stale updatedAt={null} error={club.error} onRetry={club.refresh} />{!club.error && <Text>Loading club…</Text>}</Screen>;
+  if (!c) return <Screen><Stale error={club.error} onRetry={club.refresh} />{!club.error ? <Muted>Loading club…</Muted> : null}</Screen>;
+  const color = clubColor(c.name);
   const manages = can(user?.role, 'roster') && (user?.role === 'super_admin' || user?.club_id === c.club_id);
   return (
     <Screen onRefresh={club.refresh} refreshing={club.loading}>
-      <Stale updatedAt={club.updatedAt} error={club.error} onRetry={club.refresh} />
-      <Text variant="headlineSmall">{c.name}</Text>
-      <List.Item title={c.venue.name ?? 'Home venue'} description={c.venue.lat != null ? `${c.venue.lat}, ${c.venue.lng} · Open in Maps` : undefined}
-        left={(p) => <List.Icon {...p} icon="map-marker" />}
-        onPress={() => c.venue.lat != null && Linking.openURL(`geo:${c.venue.lat},${c.venue.lng}?q=${c.venue.lat},${c.venue.lng}(${encodeURIComponent(c.venue.name ?? c.name)})`)} />
-      <Text>{Object.entries(c.socials).map(([k, v]) => `${k}: ${v}`).join('  ·  ')}</Text>
-      <Text variant="titleMedium" style={{ marginTop: 12 }}>Staff</Text>
-      {c.staff.map((s) => <List.Item key={s.role} title={s.name} description={humanize(s.role)} />)}
-      <Text variant="titleMedium">Season record</Text>
-      {c.stats.map((s) => <Text key={s.season}>{s.season}: P{s.played} W{s.won} D{s.drawn} L{s.lost}</Text>)}
-      <View style={[styles.row, { marginTop: 12 }]}>
-        <Text variant="titleMedium">Roster ({c.roster.length})</Text>
-        {manages && <Button icon="account-plus" onPress={() => setAdding(true)}>Add player</Button>}
+      <Stale error={club.error} onRetry={club.refresh} />
+      <View style={[st.hero, { backgroundColor: color }]}>
+        <Row gap={14}>
+          <View style={st.heroBadge}><TeamBadge name={c.name} source={clubBadge(c.club_id)} size={60} /></View>
+          <View style={{ flex: 1 }}><Display style={{ fontSize: 30 }}>{c.name}</Display><Text style={{ color: 'rgba(255,255,255,0.8)', fontSize: 13 }}>{c.venue.name ?? 'Home venue'} · {c.tenant_id}</Text></View>
+        </Row>
+        <Row style={{ marginTop: 16 }}>
+          {[[c.roster.length, 'Players'], [c.staff.length, 'Staff'], [c.stats[0] ? `${c.stats[0].won}-${c.stats[0].drawn}-${c.stats[0].lost}` : '—', `Season ${c.stats[0]?.season ?? ''}`]].map(([v, l]) => (
+            <View key={String(l)} style={{ flex: 1 }}><Score>{v as any}</Score><Text style={{ color: 'rgba(255,255,255,0.8)', fontSize: 12 }}>{l as string}</Text></View>
+          ))}
+        </Row>
       </View>
-      {c.roster.map((p) => {
-        const waiting = pending.filter((x) => x.ref === `player:${p.player_id}`);
-        return (
-          <List.Item key={p.player_id} title={`${p.name} · ${p.position.toUpperCase()}`}
-            description={[p.role ? humanize(p.role) : null, p.registration_type === 'loan' ? `On loan until ${p.loan_end_date}` : null,
-              waiting.length ? `⏳ ${waiting[0].label} – waiting to sync` : null].filter(Boolean).join(' · ')}
-            onPress={manages ? () => navigation.navigate('PlayerAction', { clubId: c.club_id, playerId: p.player_id }) : undefined}
-            right={manages ? (pr) => <List.Icon {...pr} icon="chevron-right" /> : undefined} />
-        );
-      })}
-      {!c.roster.length && <Empty title="No players yet" />}
-      <AddPlayerDialog visible={adding} clubId={c.club_id} onDone={() => { setAdding(false); void club.refresh(); }} />
+      {manages ? <Btn label="Manage squad" icon="account-cog-outline" onPress={() => navigation.navigate('Roster', { clubId: c.club_id })} style={{ marginTop: 14 }} /> : null}
+      <Row gap={6} style={st.tabs}>
+        {(['overview', 'squad', 'staff', 'history'] as const).map((t) => (
+          <Pressable key={t} onPress={() => setTab(t)} style={[st.tab, tab === t && { backgroundColor: C.text }]} accessibilityRole="tab" accessibilityState={{ selected: tab === t }}>
+            <Text style={{ fontSize: 13, fontWeight: '600', color: tab === t ? C.onLime : C.text2 }}>{humanize(t)}</Text>
+          </Pressable>
+        ))}
+      </Row>
+      {tab === 'overview' ? (
+        <Card style={{ padding: 0 }}>
+          <ListRow icon="stadium-variant" title={c.venue.name ?? 'Home venue'} subtitle="Home venue" />
+          <ListRow icon="map-marker-outline" title={c.venue.lat != null ? `${c.venue.lat}, ${c.venue.lng}` : 'Not set'} subtitle="Coordinates · tap to open in Maps"
+            onPress={() => c.venue.lat != null && Linking.openURL(`geo:${c.venue.lat},${c.venue.lng}?q=${c.venue.lat},${c.venue.lng}(${encodeURIComponent(c.venue.name ?? c.name)})`)} />
+          {Object.entries(c.socials).map(([k, v]) => <ListRow key={k} icon={k === 'x' ? 'twitter' : k === 'instagram' ? 'instagram' : 'facebook'} title={v} subtitle={humanize(k)} />)}
+        </Card>
+      ) : null}
+      {tab === 'squad' ? grouped(c.roster).map(([pos, list]) => (
+        <View key={pos} style={{ marginBottom: 12 }}>
+          <Caps style={{ marginBottom: 8 }}>{POS[pos] ?? pos.toUpperCase()} · {list.length}</Caps>
+          <Card style={{ padding: 0 }}>
+            {list.map((p) => (
+              <Row key={p.player_id} style={st.clubRow} gap={12}>
+                <Avatar p={p} />
+                <View style={{ flex: 1 }}><Text style={{ fontWeight: '500' }}>{p.name}</Text><Muted style={{ fontSize: 12 }}>{p.role ? humanize(p.role) : 'Squad'}{p.registration_type === 'loan' ? ' · On loan' : ''}</Muted></View>
+                {p.role === 'captain' ? <Pill label="C" tone="lime" /> : null}
+              </Row>
+            ))}
+          </Card>
+        </View>
+      )) : null}
+      {tab === 'staff' ? (
+        <Card style={{ padding: 0 }}>
+          {c.staff.map((s) => (
+            <Row key={s.role} style={st.clubRow} gap={12}>
+              {staffPhoto(s.role) ? <Image source={staffPhoto(s.role)!} style={{ width: 44, height: 44, borderRadius: 22 }} /> : (
+                <View style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: C.card3, alignItems: 'center', justifyContent: 'center' }}><Text style={{ fontWeight: '700' }}>{initials(s.name, 2)}</Text></View>
+              )}
+              <View style={{ flex: 1 }}><Text style={{ fontWeight: '500' }}>{s.name}</Text><Muted style={{ fontSize: 12 }}>{humanize(s.role)}</Muted></View>
+            </Row>
+          ))}
+        </Card>
+      ) : null}
+      {tab === 'history' ? (
+        <Card style={{ padding: 0 }}>
+          {c.stats.map((s) => (
+            <Row key={s.season} style={st.clubRow} gap={12}>
+              <Mono style={{ color: C.text, width: 44 }}>{s.season}</Mono>
+              <Text style={{ flex: 1 }}>Played {s.played} · Won {s.won} · Drawn {s.drawn} · Lost {s.lost}</Text>
+            </Row>
+          ))}
+        </Card>
+      ) : null}
     </Screen>
   );
 }
 
-function AddPlayerDialog({ visible, clubId, onDone }: { visible: boolean; clubId: string; onDone: () => void }) {
-  const [name, setName] = useState('');
-  const [position, setPosition] = useState('mf');
-  const [error, setError] = useState<string | null>(null);
-  const save = async () => {
-    try {
-      await actions.addPlayer(clubId, name, position);
-      setName('');
-      setError(null);
-      onDone();
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : 'Could not add the player.');
-    }
+export function RosterScreen({ route, navigation }: any) {
+  const { clubId, intent } = route.params ?? {};
+  const club = useClub(clubId);
+  const pending = usePending();
+  const [sheet, setSheet] = useState<RosterPlayer | null>(null);
+  const [adding, setAdding] = useState(intent === 'add');
+  const c = club.data;
+  if (!c) return <Screen><Stale error={club.error} onRetry={club.refresh} /></Screen>;
+  const gks = c.roster.filter((p) => p.position === 'gk').length;
+  const pick = (p: RosterPlayer) => {
+    if (intent && intent !== 'add') navigation.navigate('PlayerAction', { clubId, playerId: p.player_id, type: intent });
+    else setSheet(p);
   };
   return (
-    <Portal><Dialog visible={visible} onDismiss={onDone}>
-      <Dialog.Title>Add player</Dialog.Title>
-      <Dialog.Content>
-        <TextInput label="Full name" value={name} onChangeText={setName} />
-        <TextInput label="Position (gk, df, mf, fw)" value={position} onChangeText={setPosition} autoCapitalize="none" style={{ marginTop: 8 }} />
-        <HelperText type="error" visible={!!error}>{error}</HelperText>
-      </Dialog.Content>
-      <Dialog.Actions><Button onPress={onDone}>Cancel</Button><Button disabled={!name.trim()} onPress={save}>Add</Button></Dialog.Actions>
-    </Dialog></Portal>
+    <Screen onRefresh={club.refresh} refreshing={club.loading}>
+      <Row gap={10}>
+        <Card style={{ flex: 1 }}><Score>{c.roster.length}<Text style={{ fontFamily: F.display, fontSize: 18, color: C.dim }}>/25</Text></Score><Muted style={{ fontSize: 12 }}>Squad size</Muted></Card>
+        <Card style={{ flex: 1 }}><Score style={{ color: gks >= 1 ? C.text : C.err }}>{gks}</Score><Muted style={{ fontSize: 12 }}>Goalkeepers (min 1)</Muted></Card>
+      </Row>
+      {intent && intent !== 'add' ? (
+        <Row style={st.hint} gap={10}><Icon name="gesture-tap" color={C.lime} /><Text style={{ flex: 1, fontSize: 13 }}>Choose a player to {intent === 'loan' ? 'loan out' : intent}.</Text></Row>
+      ) : null}
+      <Btn kind="outline" label="Add player" icon="account-plus-outline" onPress={() => setAdding(true)} style={{ marginTop: 12 }} />
+      {grouped(c.roster).map(([pos, list]) => (
+        <View key={pos} style={{ marginTop: 16 }}>
+          <Caps style={{ marginBottom: 8 }}>{POS[pos] ?? pos.toUpperCase()} · {list.length}</Caps>
+          <Card style={{ padding: 0 }}>
+            {list.map((p) => {
+              const waiting = pending.filter((x) => x.ref === `player:${p.player_id}`);
+              return (
+                <Pressable key={p.player_id} style={st.clubRow} onPress={() => pick(p)} accessibilityRole="button" accessibilityLabel={`${p.name}, ${p.role ?? ''}`}>
+                  <Avatar p={p} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontWeight: '500' }}>{p.name}</Text>
+                    {waiting.length ? <Text style={{ color: C.warnText, fontSize: 12 }}>⏳ {waiting[0].label} · pending</Text>
+                      : <Muted style={{ fontSize: 12 }}>{p.role ? humanize(p.role) : 'Squad'}{p.registration_type === 'loan' ? ` · On loan until ${p.loan_end_date}` : ''}</Muted>}
+                  </View>
+                  <Icon name="chevron-right" color={C.dim} />
+                </Pressable>
+              );
+            })}
+          </Card>
+        </View>
+      ))}
+      <Sheet visible={!!sheet} onClose={() => setSheet(null)} title={sheet?.name}>
+        {sheet?.registration_type === 'loan' ? (
+          <Row style={[st.hint, { backgroundColor: C.infoBg, borderColor: C.info }]} gap={10}><Icon name="information-outline" color={C.infoText} />
+            <Text style={{ color: C.infoText, flex: 1, fontSize: 13 }}>On loan until {sheet.loan_end_date}. Loaned players can’t be moved until the loan ends.</Text></Row>
+        ) : null}
+        <View style={{ marginHorizontal: -20 }}>
+          {sheet && sheet.registration_type !== 'loan' ? <ListRow icon="swap-horizontal" title="Transfer" subtitle="Move permanently to another club" onPress={() => { const p = sheet; setSheet(null); navigation.navigate('PlayerAction', { clubId, playerId: p.player_id, type: 'transfer' }); }} /> : null}
+          {sheet && sheet.registration_type !== 'loan' ? <ListRow icon="calendar-arrow-right" title="Loan out" subtitle="Lend for a set period, returns automatically" onPress={() => { const p = sheet; setSheet(null); navigation.navigate('PlayerAction', { clubId, playerId: p.player_id, type: 'loan' }); }} /> : null}
+          <ListRow icon="history" title="View audit trail" subtitle="Every change, who made it and why" onPress={() => { const p = sheet!; setSheet(null); navigation.navigate('Audit', { playerId: p.player_id, name: p.name }); }} />
+          {sheet && sheet.registration_type !== 'loan' ? <ListRow icon="account-remove-outline" title="Release" danger subtitle="Remove from the club" onPress={() => { const p = sheet; setSheet(null); navigation.navigate('PlayerAction', { clubId, playerId: p.player_id, type: 'release' }); }} /> : null}
+        </View>
+      </Sheet>
+      <AddPlayerSheet visible={adding} clubId={c.club_id} onDone={(changed) => { setAdding(false); if (changed) void club.refresh(); }} />
+    </Screen>
+  );
+}
+
+function AddPlayerSheet({ visible, clubId, onDone }: { visible: boolean; clubId: string; onDone: (changed: boolean) => void }) {
+  const [name, setName] = useState('');
+  const [position, setPosition] = useState('mf');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const online = useNet((s) => s.online);
+  const save = async () => {
+    if (!name.trim()) { setError('Enter the player’s full name.'); return; }
+    setBusy(true);
+    try {
+      await actions.addPlayer(clubId, name.trim(), position);
+      toast(`${name.trim()} added to the squad`);
+      setName(''); setError(null); onDone(true);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Couldn’t add the player. Try again.');
+    } finally { setBusy(false); }
+  };
+  return (
+    <Sheet visible={visible} onClose={() => onDone(false)} title="Add player"
+      actions={<><Btn kind="outline" label="Cancel" onPress={() => onDone(false)} style={{ flex: 1 }} /><Btn label="Add player" loading={busy} disabled={!online} onPress={save} style={{ flex: 1.3 }} /></>}>
+      <Text style={st.label}>Full name</Text>
+      <TextInput value={name} onChangeText={(t) => { setName(t); setError(null); }} placeholder="e.g. Ahmed Raza" placeholderTextColor={C.dim} style={st.input} accessibilityLabel="Full name" />
+      <Text style={[st.label, { marginTop: 14 }]}>Position</Text>
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', rowGap: 8 }}>
+        {Object.entries(POS).map(([k, l]) => <Chip key={k} label={l.slice(0, -1)} selected={position === k} onPress={() => setPosition(k)} />)}
+      </View>
+      {error ? <Row gap={6} style={{ marginTop: 10 }}><Icon name="alert-circle" size={16} color={C.err} /><Text style={{ color: C.err, fontSize: 13 }}>{error}</Text></Row> : null}
+      {!online ? <Muted style={{ marginTop: 10, fontSize: 12 }}>Adding a new player needs a connection.</Muted> : null}
+    </Sheet>
   );
 }
 
 const today = () => new Date().toISOString().slice(0, 10);
+const DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 export function PlayerActionScreen({ route, navigation }: any) {
   const { clubId, playerId } = route.params;
   const club = useClub(clubId);
-  const history = usePlayerHistory(playerId);
-  const [type, setType] = useState<'transfer' | 'loan' | 'release'>('transfer');
+  const online = useNet((s) => s.online);
+  const [type, setType] = useState<'transfer' | 'loan' | 'release'>(route.params.type ?? 'transfer');
   const [to, setTo] = useState<string | null>(null);
   const [eff, setEff] = useState(today());
   const [end, setEnd] = useState('');
   const [reason, setReason] = useState('');
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [rule, setRule] = useState<string | null>(null);
   const [confirm, setConfirm] = useState(false);
-  const c = club.data;
+  const [busy, setBusy] = useState(false);
+  const c: Club | null = club.data;
   const p = c?.roster.find((x) => x.player_id === playerId);
-  if (!c || !p) return <Screen><Empty title="Player not found" message="Go back and refresh the club roster." /></Screen>;
+  if (!c || !p) return <Screen><Empty title="Player not found" message="Go back and refresh the squad." icon="account-question-outline" /></Screen>;
   const others = c.squads.filter((s) => s.squad_id !== p.squad_id);
-  const valid = /^\d{4}-\d{2}-\d{2}$/.test(eff) && (type === 'release' || !!to) && (type !== 'loan' || /^\d{4}-\d{2}-\d{2}$/.test(end));
+  const destName = others.find((s) => s.squad_id === to)?.name;
+
+  const validate = () => {
+    const e: Record<string, string> = {};
+    if (type !== 'release' && !to) e.to = 'Choose the club the player is moving to.';
+    if (!DATE.test(eff)) e.eff = 'Use the format YYYY-MM-DD, for example 2026-10-17.';
+    if (type === 'loan' && !DATE.test(end)) e.end = 'Enter when the loan ends (YYYY-MM-DD).';
+    if (type === 'loan' && DATE.test(end) && end <= eff) e.end = 'The loan must end after it starts.';
+    if (!reason.trim()) e.reason = 'Add a short reason. It’s saved in the audit trail.';
+    setErrors(e);
+    return !Object.keys(e).length;
+  };
+  const submit = async () => {
+    setConfirm(false);
+    setBusy(true);
+    const row = actions.queueRosterAction({ club: c, player: p, type, toSquadId: to, effectiveDate: eff, loanEndDate: end || null, reason: reason.trim() });
+    const result = await sendNow(row.action_id);
+    setBusy(false);
+    if (!result) { toast('Saved on this phone. It will sync when you’re back online.', 'warn'); navigation.goBack(); return; }
+    if (result.status === 'rejected') { setRule(result.message); return; }
+    toast(type === 'release' ? `${p.name} released` : `${p.name} ${type === 'loan' ? 'loaned' : 'transferred'} to ${destName}`);
+    navigation.goBack();
+  };
+
   return (
     <Screen>
-      <Text variant="headlineSmall">{p.name}</Text>
-      <Text style={{ marginBottom: 12 }}>{p.position.toUpperCase()} · {p.role ? humanize(p.role) : 'No role'}</Text>
-      <SegmentedButtons value={type} onValueChange={(v) => setType(v as any)}
-        buttons={[{ value: 'transfer', label: 'Transfer' }, { value: 'loan', label: 'Loan' }, { value: 'release', label: 'Release' }]} />
-      {type !== 'release' && (
-        <>
-          <Text variant="labelLarge" style={{ marginTop: 12 }}>Destination squad</Text>
-          {others.map((s) => (
-            <List.Item key={s.squad_id} title={s.name} onPress={() => setTo(s.squad_id)}
-              left={(pr) => <List.Icon {...pr} icon={to === s.squad_id ? 'radiobox-marked' : 'radiobox-blank'} />} />
-          ))}
-        </>
-      )}
-      <TextInput label="Effective date (YYYY-MM-DD)" value={eff} onChangeText={setEff} style={{ marginTop: 8 }} />
-      {type === 'loan' && <TextInput label="Loan end date (YYYY-MM-DD)" value={end} onChangeText={setEnd} style={{ marginTop: 8 }} />}
-      <TextInput label="Reason" value={reason} onChangeText={setReason} style={{ marginTop: 8 }} />
-      <Button mode="contained" disabled={!valid} style={{ marginTop: 16 }} contentStyle={{ height: 48 }} onPress={() => setConfirm(true)}>
-        {humanize(type)} player
-      </Button>
-      <Text variant="bodySmall" style={{ marginTop: 4 }}>Works offline: the change is queued and synced automatically.</Text>
-
-      <Card style={{ marginTop: 24 }}><Card.Title title="History (audit trail)" />
-        <Card.Content>
-          {history.data?.history.map((h) => (
-            <Text key={h.audit_id} style={{ marginBottom: 4 }}>{h.effective_date} · {humanize(h.action)} {h.from_squad_id ?? ''} → {h.to_squad_id ?? '—'} · by {h.who}</Text>
-          ))}
-          {!history.data?.history.length && <Text>No changes recorded yet.</Text>}
-        </Card.Content>
+      <Card>
+        <Row gap={12}>
+          <Avatar p={p} size={48} />
+          <View style={{ flex: 1 }}><Text style={{ fontWeight: '700', fontSize: 17 }}>{p.name}</Text><Muted style={{ fontSize: 12 }}>{p.position.toUpperCase()} · {p.role ? humanize(p.role) : 'Squad'} · {c.name}</Muted></View>
+        </Row>
       </Card>
-
-      <Portal><Dialog visible={confirm} onDismiss={() => setConfirm(false)}>
-        <Dialog.Title>Confirm {type}</Dialog.Title>
-        <Dialog.Content><Text>{type === 'release' ? `Release ${p.name} from the club?` : `${humanize(type)} ${p.name} to ${others.find((s) => s.squad_id === to)?.name}?`}</Text></Dialog.Content>
-        <Dialog.Actions>
-          <Button onPress={() => setConfirm(false)}>Cancel</Button>
-          <Button onPress={() => {
-            actions.queueRosterAction({ club: c, player: p, type, toSquadId: to, effectiveDate: eff, loanEndDate: end || null, reason });
-            setConfirm(false);
-            navigation.goBack();
-          }}>Confirm</Button>
-        </Dialog.Actions>
-      </Dialog></Portal>
+      <Row gap={6} style={[st.tabs, { marginTop: 14 }]}>
+        {(['transfer', 'loan', 'release'] as const).map((t) => (
+          <Pressable key={t} onPress={() => { setType(t); setRule(null); setErrors({}); }} style={[st.tab, type === t && { backgroundColor: t === 'release' ? C.live : C.text }]} accessibilityRole="tab" accessibilityState={{ selected: type === t }}>
+            <Text style={{ fontSize: 14, fontWeight: '600', color: type === t ? (t === 'release' ? '#fff' : C.onLime) : C.text2 }}>{humanize(t)}</Text>
+          </Pressable>
+        ))}
+      </Row>
+      {rule ? (
+        <View style={st.rule}>
+          <Row gap={8}><Icon name="block-helper" size={18} color={C.err} /><Text style={{ color: C.err, fontWeight: '700' }}>This move isn’t allowed</Text></Row>
+          <Text style={{ color: C.errText2, marginTop: 6, fontSize: 13 }}>{rule}</Text>
+        </View>
+      ) : null}
+      {type !== 'release' ? (
+        <>
+          <Section title={type === 'loan' ? 'Loan to' : 'Transfer to'} />
+          <Card style={{ padding: 0 }}>
+            {others.map((s) => {
+              const sel = to === s.squad_id;
+              return (
+                <Pressable key={s.squad_id} onPress={() => { setTo(s.squad_id); setErrors((e) => ({ ...e, to: '' })); setRule(null); }} style={[st.clubRow, sel && { backgroundColor: C.limeTint }]} accessibilityRole="radio" accessibilityState={{ checked: sel }}>
+                  <TeamBadge name={s.name} source={clubBadge(s.club_id)} size={32} />
+                  <Text style={{ flex: 1, fontWeight: '500' }}>{s.name}</Text>
+                  <Icon name={sel ? 'radiobox-marked' : 'radiobox-blank'} color={sel ? C.lime : C.dim} />
+                </Pressable>
+              );
+            })}
+          </Card>
+          {errors.to ? <Text style={st.err}>{errors.to}</Text> : null}
+        </>
+      ) : null}
+      <Section title="Details" />
+      <Text style={st.label}>Effective date</Text>
+      <TextInput value={eff} onChangeText={setEff} style={[st.input, errors.eff ? st.inputErr : null]} placeholderTextColor={C.dim} accessibilityLabel="Effective date" />
+      {errors.eff ? <Text style={st.err}>{errors.eff}</Text> : null}
+      {type === 'loan' ? (<>
+        <Text style={[st.label, { marginTop: 14 }]}>Loan ends</Text>
+        <TextInput value={end} onChangeText={setEnd} placeholder="2026-10-31" style={[st.input, errors.end ? st.inputErr : null]} placeholderTextColor={C.dim} accessibilityLabel="Loan end date" />
+        {errors.end ? <Text style={st.err}>{errors.end}</Text> : null}
+      </>) : null}
+      <Row gap={6} style={{ marginTop: 8 }}><Icon name="calendar-range" size={15} color={C.faint} /><Muted style={{ fontSize: 12 }}>Transfer window: 1–31 Oct 2026. Releases are allowed any day.</Muted></Row>
+      <Text style={[st.label, { marginTop: 14 }]}>Reason (required)</Text>
+      <TextInput value={reason} onChangeText={(t) => { setReason(t); setErrors((e) => ({ ...e, reason: '' })); }} placeholder="Why is this change happening?" style={[st.input, errors.reason ? st.inputErr : null]} placeholderTextColor={C.dim} accessibilityLabel="Reason" />
+      {errors.reason ? <Text style={st.err}>{errors.reason}</Text> : null}
+      <Btn label={type === 'release' ? 'Release player' : type === 'loan' ? 'Loan player' : 'Transfer player'} kind={type === 'release' ? 'dangerSolid' : 'primary'} loading={busy}
+        onPress={() => validate() && setConfirm(true)} style={{ marginTop: 20 }} />
+      <Sheet visible={confirm} onClose={() => setConfirm(false)} title={type === 'release' ? `Release ${p.name}?` : `${type === 'loan' ? 'Loan' : 'Transfer'} ${p.name}?`}
+        actions={<><Btn kind="outline" label="Cancel" onPress={() => setConfirm(false)} style={{ flex: 1 }} /><Btn kind={type === 'release' ? 'dangerSolid' : 'primary'} label={online ? 'Confirm' : 'Queue change'} onPress={submit} style={{ flex: 1.3 }} /></>}>
+        <Muted>{type === 'release' ? `${p.name} will leave ${c.name} from ${eff}.` : type === 'loan' ? `${p.name} plays for ${destName} from ${eff} until ${end}, then returns automatically.` : `${p.name} moves permanently to ${destName} from ${eff} and joins as a substitute.`}</Muted>
+        <Muted style={{ marginTop: 8 }}>Reason: “{reason.trim()}”. This is saved in the audit trail.</Muted>
+        {!online ? <Row style={[st.hint, { backgroundColor: C.offSurface, borderColor: C.offBorder }]} gap={8}><Icon name="cloud-off-outline" color={C.offText} /><Text style={{ color: C.offText, flex: 1, fontSize: 13 }}>You’re offline. The change is queued and sent when you reconnect.</Text></Row> : null}
+      </Sheet>
     </Screen>
   );
 }
+
+export function AuditScreen({ route }: any) {
+  const { playerId, name } = route.params;
+  const history = usePlayerHistory(playerId);
+  const entries = history.data?.history ?? [];
+  return (
+    <Screen onRefresh={history.refresh} refreshing={history.loading}>
+      <Stale error={history.error} onRetry={history.refresh} />
+      <Text style={{ fontSize: 18, fontWeight: '700' }}>{name}</Text>
+      <Row gap={6} style={{ marginTop: 4, marginBottom: 16 }}><Icon name="lock-outline" size={14} color={C.faint} /><Muted style={{ fontSize: 12 }}>Permanent record. Entries can’t be edited or deleted.</Muted></Row>
+      {entries.map((h, i) => (
+        <Row key={h.audit_id} gap={14} style={{ alignItems: 'flex-start' }}>
+          <View style={{ alignItems: 'center', width: 14 }}>
+            <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: C.lime, marginTop: 4 }} />
+            {i < entries.length - 1 ? <View style={{ width: 2, flex: 1, minHeight: 56, backgroundColor: C.border }} /> : null}
+          </View>
+          <View style={{ flex: 1, paddingBottom: 18 }}>
+            <Text style={{ fontWeight: '600' }}>{humanize(h.action)} · {h.from_squad_id ?? 'new'} → {h.to_squad_id ?? 'released'}</Text>
+            {h.why ? <Muted style={{ marginTop: 2 }}>“{h.why}”</Muted> : null}
+            <Mono style={{ marginTop: 4 }}>{h.who} · {h.effective_date} · {h.audit_id}</Mono>
+          </View>
+        </Row>
+      ))}
+      {!entries.length ? <EmptyState icon="history" title="No changes recorded yet" message="Transfers, loans and releases will appear here." /> : null}
+    </Screen>
+  );
+}
+
+const st = StyleSheet.create({
+  clubRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14, minHeight: 56, paddingVertical: 8, borderTopWidth: 1, borderTopColor: C.divider },
+  hero: { borderRadius: 22, padding: 18 },
+  heroBadge: { padding: 3, borderRadius: 36, backgroundColor: 'rgba(255,255,255,0.18)' },
+  tabs: { backgroundColor: C.card, borderRadius: 14, padding: 4, marginTop: 16, marginBottom: 14, borderWidth: 1, borderColor: C.border },
+  tab: { flex: 1, minHeight: 44, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  hint: { backgroundColor: C.limeTint, borderWidth: 1, borderColor: C.border2, borderRadius: 12, padding: 12, marginTop: 12 },
+  label: { color: C.text2, fontWeight: '600', fontSize: 13, marginBottom: 6 },
+  input: { backgroundColor: C.card, color: C.text, borderRadius: 12, borderWidth: 1, borderColor: C.border2, paddingHorizontal: 16, minHeight: 52, fontSize: 15, fontFamily: F.regular },
+  inputErr: { borderColor: C.errBorder },
+  err: { color: C.err, fontSize: 13, marginTop: 6 },
+  rule: { backgroundColor: C.errSurface, borderWidth: 1, borderColor: C.errBorder, borderRadius: 14, padding: 14, marginBottom: 4 },
+});

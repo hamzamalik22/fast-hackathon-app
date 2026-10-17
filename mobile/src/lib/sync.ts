@@ -90,11 +90,18 @@ export function enqueue(type: OutboxRow['type'], payload: Record<string, unknown
   };
   outboxAdd(row);
   refreshPending();
-  if (useNet.getState().online) void flush();
   return row;
 }
 
-export async function flush(): Promise<void> {
+/** Online: send now and return this action's result. Offline: stays queued (result null). */
+export async function sendNow(actionId: string, quiet = true) {
+  if (!useNet.getState().online) return null;
+  await flush(quiet);
+  return useNet.getState().lastResults?.find((r) => r.action_id === actionId) ?? null;
+}
+
+/** quiet = results are rendered inline by the caller (e.g. the roster form), so no results sheet pops up. */
+export async function flush(quiet = false): Promise<void> {
   const st = useNet.getState();
   if (st.syncing || !useSession.getState().token) return;
   const rows = outboxAll();
@@ -111,11 +118,11 @@ export async function flush(): Promise<void> {
       const label = byId.get(x.action_id)?.label ?? 'Change';
       const message = x.status === 'applied' ? 'Saved on the server.'
         : x.status === 'duplicate' ? 'Already synced earlier.' : friendly(x.error_code);
-      return { action_id: x.action_id, label, status: x.status, resolution: x.resolution, error_code: x.error_code, message, processed_at: processed };
+      return { action_id: x.action_id, label, status: x.status, resolution: x.resolution, error_code: x.error_code, message, processed_at: processed, processed_order: x.processed_order };
     });
     outboxDelete(res.results.map((x) => x.action_id));
     syncLogAdd(items);
-    useNet.setState((s) => ({ lastSync: processed, lastResults: items, dataVersion: s.dataVersion + 1 }));
+    useNet.setState((s) => ({ lastSync: processed, lastResults: items, resultsShown: !!quiet, dataVersion: s.dataVersion + 1 }));
   } catch (e) {
     if (e instanceof ApiError && e.code === 'NETWORK') useNet.setState({ online: false });
   } finally {

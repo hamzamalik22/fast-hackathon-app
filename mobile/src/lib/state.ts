@@ -48,7 +48,7 @@ export const useSession = create<SessionState>((set) => ({
   },
 }));
 
-export type ResultItem = { action_id: string; label: string; status: string; message: string };
+export type ResultItem = { action_id: string; label: string; status: string; message: string; processed_order?: number; error_code?: string | null };
 
 type NetState = {
   online: boolean;
@@ -57,11 +57,12 @@ type NetState = {
   pending: number;
   lastSync: string | null;
   lastResults: ResultItem[] | null;
+  resultsShown: boolean;
   dataVersion: number;
 };
 
 export const useNet = create<NetState>(() => ({
-  online: false, checked: false, syncing: false, pending: 0, lastSync: null, lastResults: null, dataVersion: 0,
+  online: false, checked: false, syncing: false, pending: 0, lastSync: null, lastResults: null, resultsShown: true, dataVersion: 0,
 }));
 
 export type CartLine = { product: Product; variant: Variant; quantity: number };

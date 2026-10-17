@@ -74,6 +74,14 @@ export function syncLogRecent(limit = 30): SyncLogRow[] {
   return db.getAllSync<SyncLogRow>('SELECT * FROM sync_log ORDER BY rowid DESC LIMIT ?', [limit]);
 }
 
+export function syncLogClear() {
+  db.execSync('DELETE FROM sync_log;');
+}
+
+export function cacheTimes(prefix: string): { key: string; updated_at: string }[] {
+  return db.getAllSync<{ key: string; updated_at: string }>('SELECT key, updated_at FROM cache WHERE key LIKE ? ORDER BY updated_at DESC', [`${prefix}%`]);
+}
+
 export function clearUserData() {
   db.execSync('DELETE FROM cache; DELETE FROM sync_log;');
 }

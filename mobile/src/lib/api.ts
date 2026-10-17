@@ -77,7 +77,7 @@ export type Club = {
 };
 export type AuditEntry = { audit_id: string; action: string; from_squad_id: string | null; to_squad_id: string | null; effective_date: string; state: string; who: string; when: string; why: string | null };
 export type Receipt = { payload: { order_id: string; customer_id: string; items: { variant_id: string; quantity: number; unit_price_minor: number }[]; subtotal_minor: number; discount_minor: number; total_minor: number; currency: string; paid_at: string }; signature: string; pdf_base64: string };
-export type CheckoutResult = { order_id: string; status: string; total_minor: number; receipt: Receipt };
+export type CheckoutResult = { order_id: string; status: string; total_minor: number; subtotal_minor: number; discount_minor: number; receipt: Receipt; payment?: { authorization_id: string; capture_id: string; state: string } };
 export type SyncResult = { action_id: string; status: 'applied' | 'rejected' | 'duplicate'; resolution: string; error_code: string | null; processed_order: number; server_version: number; signature: string | null };
 
 // ---------------------------------------------------------------- endpoints
@@ -98,4 +98,5 @@ export const api = {
   orders: () => request<{ orders: { order_id: string; status: string; total_minor: number; created_at: string }[] }>('GET', '/api/v1/orders'),
   receipt: (orderId: string) => request<Receipt>('GET', `/api/v1/orders/${orderId}/receipt`),
   sync: (body: unknown) => request<{ results: SyncResult[]; summary: Record<string, number> }>('POST', '/api/v1/sync', body, 20000),
+  createSport: (body: unknown) => request<{ sport_id: string; status: string }>('POST', '/api/v1/admin/sports', body),
 };

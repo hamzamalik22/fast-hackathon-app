@@ -2,11 +2,12 @@
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 
+import { toast } from '../screens/common';
 import { api, Club, MatchDetail, Receipt, RosterPlayer } from './api';
-import { cacheSet } from './db';
+import { cacheSet, OutboxRow } from './db';
 import { humanize } from './hooks';
 import { CartLine, useCart, useSession } from './state';
-import { enqueue, pendingFor, uuid } from './sync';
+import { enqueue, pendingFor, sendNow, uuid } from './sync';
 
 // ---------------------------------------------------------------- session
 export async function login(email: string, password: string) {
@@ -48,9 +49,20 @@ function teamName(match: MatchDetail, teamId: string) {
   return teamId === match.home.team_id ? match.home_name : match.away_name;
 }
 
+/** Sends a queued action right away when online and reports the outcome as a toast. */
+export async function deliver(row: OutboxRow, done: string) {
+  const r = await sendNow(row.action_id);
+  if (!r) toast('Saved on this phone. It will sync when you’re back online.', 'warn');
+  else if (r.status === 'rejected') toast(r.message, 'warn');
+  else toast(done);
+  return r;
+}
+
 function queueMatchEvent(match: MatchDetail, type: string, payload: Record<string, unknown>, label: string) {
-  return enqueue('score_event', { event_id: `app-${uuid()}`, match_id: match.match_id, type, payload },
+  const row = enqueue('score_event', { event_id: `app-${uuid()}`, match_id: match.match_id, type, payload },
     matchBaseVersion(match), label, matchRef(match.match_id));
+  void deliver(row, `${label} · saved`);
+  return row;
 }
 
 export const scoreEvent = (match: MatchDetail, teamId: string, eventType: string) =>
@@ -107,6 +119,7 @@ export async function checkout(lines: CartLine[], discountCode: string | null, t
     payment: { token },
   });
   cacheSet(`receipt:${result.order_id}`, result.receipt);
+  cacheSet(`order:${result.order_id}`, result);
   useCart.getState().clear();
   return result;
 }
