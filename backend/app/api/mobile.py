@@ -6,6 +6,7 @@ import bcrypt
 from fastapi import APIRouter, Request
 
 from .. import db
+from ..domain import leagues as league_domain
 from ..domain import schedule, scoring
 from ..domain import store as store_domain
 from ..errors import ApiError, conflict, not_found, validation_error
@@ -409,6 +410,12 @@ async def order_status(request: Request, order_id: str):
         await conn.execute("UPDATE orders SET status=%s WHERE order_id=%s", (target, order_id))
         await conn.execute("INSERT INTO order_events(order_id, from_status, to_status) VALUES (%s,%s,%s)",
                            (order_id, o["status"], target))
+        if target == "refunded":
+            # Mock gateway refund simulation: the payment is refunded and the stock goes back on sale.
+            row = await db.fetchone(conn, "SELECT response FROM orders WHERE order_id=%s", (order_id,))
+            for it in sorted(db.lj(row["response"])["items"], key=lambda x: x["variant_id"]):
+                await conn.execute("UPDATE variants SET stock = stock + %s WHERE variant_id=%s", (it["quantity"], it["variant_id"]))
+            await conn.execute("INSERT INTO payments(order_id, state) VALUES (%s,'refunded')", (order_id,))
     await realtime.emit_domain_event("order.status_changed", {"order_id": order_id, "from": o["status"], "to": target})
     return {"order_id": order_id, "status": target}
 
@@ -439,6 +446,29 @@ async def sync(request: Request):
 async def admin_sports(request: Request):
     await rbac_svc.authorize(current_user(request), "admin.config")
     return respond(201, await scoring_svc.create_sport(await read_json(request)))
+
+
+@router.get("/leagues/{league_id}/promotion")
+async def league_promotion(request: Request, league_id: str, promote: int = 1, relegate: int = 1):
+    """FR-1.2 divisions: who is promoted/relegated given the current table."""
+    await _league_view(current_user(request), league_id)
+    table = await leagues_svc.get_standings(league_id)
+    return {"league_id": league_id, **league_domain.promotion_relegation([r["team_id"] for r in table["table"]], promote, relegate)}
+
+
+@router.post("/admin/knockout")
+async def hybrid_knockout(request: Request):
+    """FR-1.2 hybrid format: group leagues (group stage) -> seeded knockout bracket from their standings."""
+    claims = current_user(request)
+    body = await read_json(request)
+    groups, per = body.get("groups"), body.get("qualifiers_per_group", 2)
+    if not isinstance(groups, list) or not groups or not all(isinstance(g, str) for g in groups) or not isinstance(per, int):
+        raise validation_error(["groups", "qualifiers_per_group"])
+    tables = {}
+    for lid in groups:
+        await _league_view(claims, lid)
+        tables[lid] = [r["team_id"] for r in (await leagues_svc.get_standings(lid))["table"]]
+    return league_domain.hybrid_knockout(tables, per, bool(body.get("third_place_match", False)))
 
 
 @router.post("/admin/leagues")

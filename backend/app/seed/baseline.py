@@ -21,7 +21,7 @@ DEFAULT_STOCK = {"var-jersey-001-M": 1, "var-jersey-001-L": 5}
 PASSWORD_HASH = bcrypt.hashpw(config.DEMO_PASSWORD.encode(), bcrypt.gensalt(rounds=10)).decode()
 
 TENANTS = [
-    ("tenant-alpha", "Alpha Sports", "/static/tenant-alpha.png", "#0B5FFF", "#FFB800"),
+    ("tenant-alpha", "Alpha Sports", "/static/tenant-alpha.jpg", "#D6FF41", "#0E1014"),
     ("tenant-beta", "Beta Athletics", "/static/tenant-beta.png", "#0E7C3A", "#F2F2F2"),
 ]
 USERS = [
