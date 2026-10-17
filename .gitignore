@@ -1,0 +1,13 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.coverage
+coverage.json
+node_modules/
+mobile/android/
+mobile/ios/
+mobile/.expo/
+*.keystore
+!mobile/release/app-release.apk

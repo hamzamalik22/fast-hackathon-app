@@ -1,0 +1,26 @@
+class ApiError(Exception):
+    """Any non-2xx response. Rendered as {"error": {"code", "message", "details"}}."""
+
+    def __init__(self, status: int, code: str, message: str | None = None,
+                 details: dict | None = None, headers: dict | None = None):
+        super().__init__(code)
+        self.status = status
+        self.code = code
+        self.message = message or code.replace("_", " ").capitalize() + "."
+        self.details = details if details is not None else {}
+        self.headers = headers
+
+    def body(self) -> dict:
+        return {"error": {"code": self.code, "message": self.message, "details": self.details}}
+
+
+def validation_error(fields, message: str = "Request validation failed.") -> ApiError:
+    return ApiError(400, "VALIDATION_ERROR", message, {"fields": list(fields)})
+
+
+def not_found(code: str, message: str, **details) -> ApiError:
+    return ApiError(404, code, message, details)
+
+
+def conflict(code: str, message: str, **details) -> ApiError:
+    return ApiError(409, code, message, details)
