@@ -1,9 +1,13 @@
 """Mandatory autograder interface /audit/v1/* (spec section 5). Thin: parse -> service -> respond."""
 from fastapi import APIRouter, Request
+from starlette.concurrency import run_in_threadpool
 
 from .. import db
+from ..domain import fixtures
 from ..http import read_json, respond
 from ..seed import baseline
+from ..services import checkout as checkout_svc
+from ..services import leagues as leagues_svc
 from ..services import scoring as scoring_svc
 from ..validation import Fields, is_int
 
@@ -43,3 +47,30 @@ async def append_event(request: Request):
 @router.get("/score/{match_id}")
 async def score(match_id: str):
     return respond(200, await scoring_svc.score(match_id))
+
+
+@router.post("/fixtures")
+async def generate_fixtures(request: Request):
+    body = await read_json(request)
+    return respond(200, await run_in_threadpool(fixtures.generate, body))
+
+
+@router.post("/leagues")
+async def create_league(request: Request):
+    return respond(201, await leagues_svc.create_league(await read_json(request)))
+
+
+@router.get("/standings/{league_id}")
+async def standings(league_id: str):
+    return respond(200, await leagues_svc.get_standings(league_id))
+
+
+@router.post("/checkout")
+async def checkout(request: Request):
+    status, resp = await checkout_svc.checkout(await read_json(request))
+    return respond(status, resp)
+
+
+@router.get("/inventory/{variant_id}")
+async def inventory(variant_id: str):
+    return respond(200, await checkout_svc.inventory(variant_id))
