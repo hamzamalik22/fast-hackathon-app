@@ -1,4 +1,5 @@
 """Production API for the mobile app (/api/v1/*, rate limited, JWT + RBAC). Reuses the audit services."""
+import uuid
 from datetime import datetime
 
 import bcrypt
@@ -267,6 +268,44 @@ async def club_profile(request: Request, club_id: str):
             "venue": {"name": c["venue_name"], "lat": c["lat"], "lng": c["lng"]}, "socials": db.lj(c["socials"]),
             "staff": db.lj(c["staff"]), "stats": db.lj(c["stats"]), "roster_league_id": league_id, "squads": squads,
             "roster": roster}
+
+
+@router.post("/clubs/{club_id}/players")
+async def add_player(request: Request, club_id: str):
+    """Register a new player in the club's squad (manager of that club). Audited like every roster change."""
+    claims = current_user(request)
+    body = await read_json(request)
+    name, position, role = body.get("name"), body.get("position"), body.get("role") or "substitute"
+    bad = [k for k, ok in (("name", isinstance(name, str) and 1 <= len(name.strip()) <= 80),
+                           ("position", isinstance(position, str) and 1 <= len(position.strip()) <= 20),
+                           ("role", role in ("captain", "vice_captain", "starter", "substitute"))) if not ok]
+    if bad:
+        raise validation_error(bad)
+    async with db.tx() as conn:
+        sq = await db.fetchone(conn, "SELECT league_id, squad_id, tenant_id FROM squads WHERE club_id=%s "
+                                     "ORDER BY league_id LIMIT 1", (club_id,))
+        if sq is None:
+            raise not_found("CLUB_NOT_FOUND", f"Club {club_id} has no squad.", club_id=club_id)
+        if not await rbac_svc.allowed(conn, claims, "roster.transfer", {"tenant_id": sq["tenant_id"], "club_id": club_id}):
+            raise rbac_svc.forbidden()
+        await db.lock(conn, "roster:" + sq["league_id"])
+        league = await roster_svc.load_league(conn, sq["league_id"])
+        size = (await db.fetchone(conn, "SELECT count(*) AS n FROM roster_players WHERE league_id=%s AND squad_id=%s",
+                                  (sq["league_id"], sq["squad_id"])))["n"]
+        if league and size + 1 > league["max_squad_size"]:
+            raise conflict("SQUAD_FULL", "The squad is full.", squad_id=sq["squad_id"])
+        pid = f"pl-{uuid.uuid4().hex[:10]}"
+        today = datetime.utcnow().date()
+        await conn.execute("INSERT INTO roster_players(player_id, league_id, name, position, squad_id, role, "
+                           "registration_type, start_date, initial_squad_id) VALUES (%s,%s,%s,%s,%s,%s,'registration',%s,NULL)",
+                           (pid, sq["league_id"], name.strip(), position.strip().lower(), sq["squad_id"], role, today))
+        await roster_svc._append_audit(conn, {"action": "register", "player_id": pid, "league_id": sq["league_id"],
+                                              "from_squad_id": None, "to_squad_id": sq["squad_id"],
+                                              "effective_date": today.isoformat(), "state": "active",
+                                              "who": claims["sub"], "why": "New registration"})
+    return respond(201, {"player": {"player_id": pid, "name": name.strip(), "position": position.strip().lower(),
+                                    "role": role, "squad_id": sq["squad_id"], "parent_squad_id": None,
+                                    "registration_type": "registration", "loan_end_date": None, "audit_count": 1}})
 
 
 @router.post("/roster/transfer")
