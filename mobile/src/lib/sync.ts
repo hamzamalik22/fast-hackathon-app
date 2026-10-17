@@ -31,12 +31,32 @@ export function refreshPending() {
   useNet.setState({ pending: outboxAll().length });
 }
 
+// Tried in order until one answers, only while no server address has been saved in Settings.
+const CANDIDATE_SERVERS = ['http://localhost:8080', 'http://10.0.2.2:8080'];
+
+async function discoverServer(): Promise<boolean> {
+  for (const base of CANDIDATE_SERVERS) {
+    try {
+      await api.health(base);
+      kvSet('server_url', base);
+      return true;
+    } catch {
+      /* try the next candidate */
+    }
+  }
+  return false;
+}
+
 export async function checkConnection(): Promise<boolean> {
   let ok = false;
   if (netConnected) {
     try {
-      await api.health();
-      ok = true;
+      if (!kvGet('server_url')) {
+        ok = await discoverServer();
+      } else {
+        await api.health();
+        ok = true;
+      }
     } catch {
       ok = false;
     }
