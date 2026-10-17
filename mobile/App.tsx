@@ -55,7 +55,7 @@ function MainTabs() {
 
 const STATUS = ['Restoring session…', 'Loading saved fixtures…', 'Checking the connection…'];
 
-function Splash() {
+function Splash({ fonts }: { fonts: boolean }) {
   const scale = useRef(new Animated.Value(0.72)).current;
   const fade = useRef(new Animated.Value(0)).current;
   const bar = useRef(new Animated.Value(0)).current;
@@ -74,7 +74,7 @@ function Splash() {
       <View style={{ position: 'absolute', width: 260, height: 260, borderRadius: 130, backgroundColor: 'rgba(214,255,65,0.06)' }} />
       <Animated.View style={{ opacity: fade, transform: [{ scale }], alignItems: 'center' }}>
         <Image source={LOGO} style={{ width: 88, height: 88, borderRadius: 22 }} />
-        <RNText style={{ color: C.text, fontFamily: 'BarlowCondensed-ExtraBold', fontSize: 40, letterSpacing: 3.2, marginTop: 18 }}>ALPHA LEAGUE</RNText>
+        <RNText style={{ color: C.text, fontFamily: fonts ? 'BarlowCondensed-ExtraBold' : undefined, fontWeight: fonts ? 'normal' : '800', fontSize: 40, letterSpacing: 3.2, marginTop: 18 }}>ALPHA LEAGUE</RNText>
         <RNText style={{ color: C.muted, fontFamily: 'Geist-Regular', fontSize: 14, marginTop: 4 }}>Every match. Every club. One league.</RNText>
       </Animated.View>
       <View style={{ position: 'absolute', bottom: 64, alignItems: 'center' }}>
@@ -100,7 +100,7 @@ export default function App() {
     return () => clearTimeout(t);
   }, [restore, signOut]);
 
-  if (!ready || !fontsLoaded || minSplash) return <Splash />;
+  if (!ready || !fontsLoaded || minSplash) return <Splash fonts={fontsLoaded} />;
 
   return (
     <SafeAreaProvider>

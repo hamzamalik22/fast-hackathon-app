@@ -54,8 +54,13 @@ export type Role = 'super_admin' | 'league_organizer' | 'club_manager' | 'player
 export type User = { user_id: string; email: string; name: string; role: Role; tenant_id: string | null; league_ids: string[]; club_id: string | null; player_id: string | null };
 export type Tenant = { tenant_id: string; name: string; logo_url: string | null; primary_color: string | null; accent_color: string | null };
 export type League = { league_id: string; name: string; season: string; sport_id: string; sport_name: string; scoring_model: string; tenant_id: string };
-export type Side = { team_id: string; name: string; score: number };
-export type MatchSummary = { match_id: string; round: number | null; scheduled_at: string | null; venue: string | null; status: string; version: number; home: Side; away: Side };
+export type Side = { team_id: string; name: string; score: number; wickets?: number | null; overs?: string | null };
+export type MatchSummary = { match_id: string; round: number | null; scheduled_at: string | null; venue: string | null; status: string; version: number; sport_id?: string; scoring_model?: string; home: Side; away: Side };
+
+/** Cricket shows runs/wickets; other sports show the plain score. */
+export function scoreText(s: { score: number; wickets?: number | null }): string {
+  return s.wickets != null ? `${s.score}/${s.wickets}` : String(s.score);
+}
 export type StandingRow = { rank: number; team_id: string; played: number; won: number; drawn: number; lost: number; scored: number; conceded: number; diff: number; points: number; fair_play: number; status: 'clinched' | 'eliminated' | 'still_possible'; resolved_by: string | null };
 export type Standings = { league_id: string; sport_id: string; qualification_spots: number; table: StandingRow[]; team_names: Record<string, string> };
 export type MatchEvent = { sequence: number; event_id: string; type: string; payload: any; compensated: boolean; compensated_by: string | null };

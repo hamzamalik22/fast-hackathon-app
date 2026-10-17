@@ -61,9 +61,10 @@ export async function checkConnection(): Promise<boolean> {
       ok = false;
     }
   }
-  const was = useNet.getState().online;
+  const st = useNet.getState();
   useNet.setState({ online: ok, checked: true });
-  if (ok && !was) void flush();
+  // Reconnected, or still-queued actions from an earlier failed attempt: sync them automatically.
+  if (ok && !st.syncing && (!st.online || outboxAll().length > 0)) void flush();
   return ok;
 }
 
@@ -93,10 +94,14 @@ export function enqueue(type: OutboxRow['type'], payload: Record<string, unknown
   return row;
 }
 
-/** Online: send now and return this action's result. Offline: stays queued (result null). */
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** Online: send now and return this action's result. Offline (or the send fails): stays queued, result null. */
 export async function sendNow(actionId: string, quiet = true) {
   if (!useNet.getState().online) return null;
-  await flush(quiet);
+  // Another sync may be running (e.g. a tap right after reconnecting): wait for it, then send ours.
+  for (let i = 0; i < 50 && useNet.getState().syncing; i++) await sleep(200);
+  if (outboxAll().some((r) => r.action_id === actionId)) await flush(quiet);
   return useNet.getState().lastResults?.find((r) => r.action_id === actionId) ?? null;
 }
 

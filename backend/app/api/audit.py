@@ -1,4 +1,7 @@
 """Mandatory autograder interface /audit/v1/* (spec section 5). Thin: parse -> service -> respond."""
+import asyncio
+
+import psycopg
 from fastapi import APIRouter, Request
 from starlette.concurrency import run_in_threadpool
 
@@ -31,9 +34,18 @@ async def reset(request: Request):
     if not isinstance(stock, dict) or not all(is_int(v) and v >= 0 for v in stock.values()):
         f.add("stock")
     f.check()
-    async with db.tx() as conn:
-        await db.lock(conn, "reset")
-        result = await baseline.reset(conn, seed, stock)
+    # TRUNCATE takes exclusive locks on every table; a concurrent reader (app, worker) can deadlock with it.
+    # Postgres then aborts one side, so retry the whole (atomic) reset a few times.
+    for attempt in range(8):
+        try:
+            async with db.tx() as conn:
+                await db.lock(conn, "reset")
+                result = await baseline.reset(conn, seed, stock)
+            break
+        except (psycopg.errors.DeadlockDetected, psycopg.errors.LockNotAvailable, psycopg.errors.SerializationFailure):
+            if attempt == 7:
+                raise
+            await asyncio.sleep(0.05 * (attempt + 1))
     await reset_rate_limits()
     return respond(200, result)
 

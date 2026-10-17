@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { Image, ImageBackground, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 
 import * as actions from '../lib/actions';
-import { api, ApiError, MatchDetail, MatchSummary } from '../lib/api';
+import { api, ApiError, MatchDetail, MatchSummary, scoreText } from '../lib/api';
 import { can, useClub, useFixtures, useLeagues, useMatch, useProducts, useSelectedLeague, useStandings, useSyncLog } from '../lib/data';
 import { formatWhen, humanize } from '../lib/hooks';
 import { money, roleLabel, useNet, useSession } from '../lib/state';
@@ -25,7 +25,8 @@ export function MatchCard({ m, leagueName, sport, onPress }: { m: MatchSummary; 
         <Row key={side.team_id} style={{ marginBottom: 8 }} gap={12}>
           <TeamBadge name={side.name} source={clubBadge(side.team_id)} size={28} />
           <Text style={{ flex: 1, fontWeight: '600', fontSize: 15 }} numberOfLines={1}>{side.name}</Text>
-          {started ? <Score style={{ fontSize: 24 }}>{side.score}</Score> : null}
+          {started && side.overs ? <Mono style={{ fontSize: 11 }}>{side.overs} ov</Mono> : null}
+          {started ? <Score style={{ fontSize: 24 }}>{scoreText(side)}</Score> : null}
         </Row>
       ))}
       <Row gap={6} style={{ marginTop: 2 }}>
@@ -46,7 +47,7 @@ function LiveHero({ m, sportId, model, onOpen }: { m: MatchSummary; sportId: str
         </Row>
         <Row style={{ justifyContent: 'space-between', marginTop: 16 }} gap={6}>
           <View style={st.heroTeam}><TeamBadge name={m.home.name} source={clubBadge(m.home.team_id)} size={52} /><Text style={st.heroName} numberOfLines={2}>{m.home.name}</Text></View>
-          <Text style={st.heroScore}>{m.home.score}<Text style={[st.heroScore, { color: C.dim }]}>:</Text>{m.away.score}</Text>
+          <Text style={[st.heroScore, m.home.wickets != null && st.heroScoreSm]}>{scoreText(m.home)}<Text style={[st.heroScore, m.home.wickets != null && st.heroScoreSm, { color: C.dim }]}>:</Text>{scoreText(m.away)}</Text>
           <View style={st.heroTeam}><TeamBadge name={m.away.name} source={clubBadge(m.away.team_id)} size={52} /><Text style={st.heroName} numberOfLines={2}>{m.away.name}</Text></View>
         </Row>
         <Btn label="Open match centre" kind="light" onPress={onOpen} style={{ marginTop: 16 }} small />
@@ -364,10 +365,10 @@ export function MatchScreen({ route, navigation }: any) {
           </Row>
           <Row style={{ justifyContent: 'space-between', marginTop: 18 }} gap={6}>
             <View style={st.heroTeam}><TeamBadge name={d.home_name} source={clubBadge(d.home.team_id)} size={56} /><Text style={st.heroName} numberOfLines={2}>{d.home_name}</Text></View>
-            <Text style={st.heroScore} accessibilityLabel={`Score ${d.home.score} to ${d.away.score}`}>{d.home.score}<Text style={[st.heroScore, { color: C.dim }]}>:</Text>{d.away.score}</Text>
+            <Text style={[st.heroScore, innings && st.heroScoreSm]} accessibilityLabel={`Score ${scoreText(d.home)} to ${scoreText(d.away)}`}>{scoreText(d.home)}<Text style={[st.heroScore, innings && st.heroScoreSm, { color: C.dim }]}>:</Text>{scoreText(d.away)}</Text>
             <View style={st.heroTeam}><TeamBadge name={d.away_name} source={clubBadge(d.away.team_id)} size={56} /><Text style={st.heroName} numberOfLines={2}>{d.away_name}</Text></View>
           </Row>
-          {innings ? <Text style={{ color: C.text2, textAlign: 'center', marginTop: 6, fontFamily: F.mono, fontSize: 12 }}>{d.home.wickets} wkts · {d.home.overs} ov   |   {d.away.wickets} wkts · {d.away.overs} ov</Text> : null}
+          {innings ? <Text style={{ color: C.text2, textAlign: 'center', marginTop: 6, fontFamily: F.mono, fontSize: 12 }}>{d.home.overs} ov   ·   {d.away.overs} ov</Text> : null}
           <Text style={{ color: C.text2, textAlign: 'center', marginTop: 8, fontSize: 13 }}>{d.status === 'in_progress' ? 'In play' : d.status === 'completed' ? 'Full time' : formatWhen(d.scheduled_at)}</Text>
           {canScore && d.status !== 'completed' ? (
             <Btn label={d.status === 'upcoming' ? 'Open scoring entry' : 'Enter score event'} icon="pencil-box-outline" onPress={() => navigation.navigate('Scoring', { matchId })} style={{ marginTop: 16 }} />
@@ -453,7 +454,7 @@ export function ScoringScreen({ route }: any) {
         <Row style={{ justifyContent: 'space-between' }}><StatusPill status={status} /><Mono>{d.match_id} · v{d.version + m.pending.length}</Mono></Row>
         <Row style={{ justifyContent: 'space-between', marginTop: 14 }} gap={6}>
           <Text style={{ flex: 1, fontWeight: '600' }} numberOfLines={2}>{d.home_name}</Text>
-          <Score style={{ fontSize: 48, lineHeight: 50 }}>{d.home.score + pendingScore(d.home.team_id)}–{d.away.score + pendingScore(d.away.team_id)}</Score>
+          <Score style={{ fontSize: d.sport.scoring_model === 'innings' ? 34 : 48, lineHeight: 50 }}>{scoreText(d.home)}–{scoreText(d.away)}</Score>
           <Text style={{ flex: 1, fontWeight: '600', textAlign: 'right' }} numberOfLines={2}>{d.away_name}</Text>
         </Row>
         <Muted style={{ fontSize: 12, marginTop: 8 }}>The score is rebuilt from the event log. Corrections are added, never deleted.</Muted>
@@ -577,6 +578,7 @@ const st = StyleSheet.create({
   heroTeam: { alignItems: 'center', flex: 1, gap: 8 },
   heroName: { color: C.text, fontWeight: '600', textAlign: 'center', fontSize: 14 },
   heroScore: { color: C.text, fontFamily: F.display, fontSize: 56, lineHeight: 58 },
+  heroScoreSm: { fontSize: 34, lineHeight: 40 },
   scoreSmall: { fontFamily: F.display, fontSize: 20 },
   liveDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: C.live },
   action: { flex: 1, backgroundColor: C.card, borderWidth: 1, borderColor: C.border, borderRadius: 16, alignItems: 'center', paddingVertical: 12, gap: 8, minHeight: 84 },

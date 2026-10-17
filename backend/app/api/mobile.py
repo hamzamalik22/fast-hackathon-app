@@ -93,20 +93,26 @@ async def _league_view(claims: dict, league_id: str):
     return league, sport, states, names
 
 
-def _match_summary(fx: dict, names: dict) -> dict:
+def _match_summary(fx: dict, names: dict, sport: dict) -> dict:
     m, st = fx["match"], fx["state"]
+    innings = sport["scoring_model"] == "innings"
+    bpo = sport["periods"].get("balls_per_over", 6) if innings else 6
+
+    def side(sd):
+        return {"team_id": sd.team_id, "name": names.get(sd.team_id, sd.team_id), "score": sd.score,
+                "wickets": sd.wickets if innings else None,
+                "overs": f"{sd.balls // bpo}.{sd.balls % bpo}" if innings else None}
     return {"match_id": m["match_id"], "round": m["round"],
             "scheduled_at": m["scheduled_at"].strftime("%Y-%m-%dT%H:%M:%SZ") if m["scheduled_at"] else None,
             "venue": m["venue_id"], "status": schedule.display_status(st.status, m["admin_status"]),
-            "version": len(fx["events"]),
-            "home": {"team_id": st.home.team_id, "name": names.get(st.home.team_id, st.home.team_id), "score": st.home.score},
-            "away": {"team_id": st.away.team_id, "name": names.get(st.away.team_id, st.away.team_id), "score": st.away.score}}
+            "version": len(fx["events"]), "sport_id": sport["sport_id"], "scoring_model": sport["scoring_model"],
+            "home": side(st.home), "away": side(st.away)}
 
 
 @router.get("/leagues/{league_id}/fixtures")
 async def league_fixtures(request: Request, league_id: str):
-    _, _, states, names = await _league_view(current_user(request), league_id)
-    return {"league_id": league_id, "matches": [_match_summary(fx, names) for fx in states]}
+    _, sport, states, names = await _league_view(current_user(request), league_id)
+    return {"league_id": league_id, "matches": [_match_summary(fx, names, sport) for fx in states]}
 
 
 @router.get("/leagues/{league_id}/standings")

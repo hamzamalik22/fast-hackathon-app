@@ -6,7 +6,7 @@ import { toast } from '../screens/common';
 import { api, Club, MatchDetail, Receipt, RosterPlayer } from './api';
 import { cacheSet, OutboxRow } from './db';
 import { humanize } from './hooks';
-import { CartLine, useCart, useSession } from './state';
+import { CartLine, useCart, useNet, useSession } from './state';
 import { enqueue, pendingFor, sendNow, uuid } from './sync';
 
 // ---------------------------------------------------------------- session
@@ -121,6 +121,7 @@ export async function checkout(lines: CartLine[], discountCode: string | null, t
   cacheSet(`receipt:${result.order_id}`, result.receipt);
   cacheSet(`order:${result.order_id}`, result);
   useCart.getState().clear();
+  useNet.setState((s) => ({ dataVersion: s.dataVersion + 1 })); // refresh stock + orders everywhere
   return result;
 }
 

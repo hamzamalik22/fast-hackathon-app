@@ -28,7 +28,7 @@ USERS = [
     # user_id, email, role, tenant_id, name, league_ids, club_id, player_id
     ("user-admin", "admin@nascon.test", "super_admin", None, "Platform Admin", [], None, None),
     ("user-organizer", "organizer@nascon.test", "league_organizer", "tenant-alpha", "League Organizer",
-     ["league-alpha-1"], None, None),
+     ["league-alpha-1", "league-alpha-t20", "league-alpha-esports"], None, None),
     ("user-manager", "manager@nascon.test", "club_manager", "tenant-alpha", "Club Manager", [], "club-alpha-1", None),
     ("user-player", "player@nascon.test", "player", "tenant-alpha", "Ali Raza", [], "club-alpha-1", "player-alpha-1"),
     ("user-viewer", "viewer@nascon.test", "viewer", "tenant-alpha", "General Viewer", [], None, None),

@@ -501,7 +501,8 @@ def test_mobile_api():
     check("5 demo logins", all(toks.values()), toks)
     H = lambda w: {"Authorization": f"Bearer {toks[w]}"}
     s, b, _ = call("GET", "/api/v1/leagues", headers=H("viewer"))
-    check("viewer sees only tenant leagues", s == 200 and {x["league_id"] for x in b["leagues"]} == {"league-alpha-1", "league-alpha-2"}, b)
+    check("viewer sees only tenant leagues", s == 200 and {x["league_id"] for x in b["leagues"]} ==
+          {"league-alpha-1", "league-alpha-2", "league-alpha-t20", "league-alpha-esports"}, b)
     s, b, _ = call("GET", "/api/v1/leagues/league-alpha-1/fixtures", headers=H("viewer"))
     statuses = [m["status"] for m in b["matches"]]
     check("fixtures with statuses", s == 200 and len(b["matches"]) == 12 and statuses.count("completed") == 4
